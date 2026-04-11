@@ -20,9 +20,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache toolchains
+        uses: actions/cache@v4
+        with:
+          path: ~/.intron/toolchains
+          key: intron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.intron.toml') }}
+
       - name: Install intron
         run: |
-          gh release download v0.13.2 -R misut/intron -p "intron-*-${{ matrix.platform }}.tar.gz"
+          gh release download v0.15.0 -R misut/intron -p "intron-*-${{ matrix.platform }}.tar.gz"
           tar xzf intron-*.tar.gz && rm intron-*.tar.gz
           mkdir -p "$HOME/.intron/bin" && mv intron "$HOME/.intron/bin/"
           echo "$HOME/.intron/bin" >> $GITHUB_PATH
@@ -39,11 +45,19 @@ jobs:
             intron install ninja 1.13.2
           fi
 
+      - name: Cache exon
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/exon
+          key: exon-v0.19.0-${{ runner.os }}-${{ runner.arch }}
+
       - name: Install exon
         run: |
-          gh release download v0.15.1 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
-          tar xzf exon-*.tar.gz && rm exon-*.tar.gz
-          mkdir -p "$HOME/.local/bin" && mv exon "$HOME/.local/bin/"
+          if [ ! -x "$HOME/.local/bin/exon" ]; then
+            gh release download v0.19.0 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
+            tar xzf exon-*.tar.gz && rm exon-*.tar.gz
+            mkdir -p "$HOME/.local/bin" && mv exon "$HOME/.local/bin/"
+          fi
           echo "$HOME/.local/bin" >> $GITHUB_PATH
         env:
           GH_TOKEN: ${{ github.token }}
@@ -61,6 +75,12 @@ jobs:
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Cache toolchains
+        uses: actions/cache@v4
+        with:
+          path: ~/.intron/toolchains
+          key: intron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.intron.toml') }}
+
       - name: Install intron
         shell: pwsh
         run: |
@@ -75,13 +95,21 @@ jobs:
           echo "$env:USERPROFILE\.intron\toolchains\cmake\4.3.1\bin" >> $env:GITHUB_PATH
           echo "$env:USERPROFILE\.intron\toolchains\ninja\1.13.2" >> $env:GITHUB_PATH
 
+      - name: Cache exon
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/exon.exe
+          key: exon-v0.19.0-${{ runner.os }}-${{ runner.arch }}
+
       - name: Install exon
         shell: pwsh
         run: |
-          gh release download v0.15.1 -R misut/exon -p "exon-*-x86_64-pc-windows-msvc.zip"
-          Expand-Archive -Path exon-*.zip -DestinationPath .
-          mkdir -Force "$env:USERPROFILE\.local\bin" | Out-Null
-          mv exon.exe "$env:USERPROFILE\.local\bin\"
+          if (-not (Test-Path "$env:USERPROFILE\.local\bin\exon.exe")) {
+            gh release download v0.19.0 -R misut/exon -p "exon-*-x86_64-pc-windows-msvc.zip"
+            Expand-Archive -Path exon-*.zip -DestinationPath .
+            mkdir -Force "$env:USERPROFILE\.local\bin" | Out-Null
+            mv exon.exe "$env:USERPROFILE\.local\bin\"
+          }
           echo "$env:USERPROFILE\.local\bin" >> $env:GITHUB_PATH
         env:
           GH_TOKEN: ${{ github.token }}
