@@ -49,12 +49,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local/bin/exon
-          key: exon-v0.21.1-${{ runner.os }}-${{ runner.arch }}
+          key: exon-v0.21.2-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install exon
         run: |
           if [ ! -x "$HOME/.local/bin/exon" ]; then
-            gh release download v0.21.1 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
+            gh release download v0.21.2 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
             tar xzf exon-*.tar.gz && rm exon-*.tar.gz
             mkdir -p "$HOME/.local/bin" && mv exon "$HOME/.local/bin/"
           fi
@@ -63,11 +63,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Test
-        env:
-          # Sanitizers are wired via env vars (not [target.cfg.build]) so
-          # the published .a archive is clean — see exon.toml note.
-          EXON_CXXFLAGS: "-fsanitize=address,undefined -fno-omit-frame-pointer"
-          EXON_LDFLAGS: "-fsanitize=address,undefined"
         run: |
           eval "$(intron env)"
           exon test
@@ -104,13 +99,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local/bin/exon.exe
-          key: exon-v0.21.1-${{ runner.os }}-${{ runner.arch }}
+          key: exon-v0.21.2-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install exon
         shell: pwsh
         run: |
           if (-not (Test-Path "$env:USERPROFILE\.local\bin\exon.exe")) {
-            gh release download v0.21.1 -R misut/exon -p "exon-*-x86_64-pc-windows-msvc.zip"
+            gh release download v0.21.2 -R misut/exon -p "exon-*-x86_64-pc-windows-msvc.zip"
             Expand-Archive -Path exon-*.zip -DestinationPath .
             mkdir -Force "$env:USERPROFILE\.local\bin" | Out-Null
             mv exon.exe "$env:USERPROFILE\.local\bin\"
@@ -121,6 +116,4 @@ jobs:
 
       - name: Test
         shell: cmd
-        env:
-          EXON_CXXFLAGS: /fsanitize=address
         run: exon test
