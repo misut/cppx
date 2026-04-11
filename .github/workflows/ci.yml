@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: aarch64-apple-darwin
+          - os: ubuntu-24.04
+            platform: x86_64-linux-gnu
+          - os: ubuntu-24.04-arm
+            platform: aarch64-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install intron
+        run: |
+          gh release download v0.13.2 -R misut/intron -p "intron-*-${{ matrix.platform }}.tar.gz"
+          tar xzf intron-*.tar.gz && rm intron-*.tar.gz
+          mkdir -p "$HOME/.intron/bin" && mv intron "$HOME/.intron/bin/"
+          echo "$HOME/.intron/bin" >> $GITHUB_PATH
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Install toolchains
+        run: |
+          intron install llvm 22.1.2
+          intron install cmake 4.3.1
+          if [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y ninja-build
+          else
+            intron install ninja 1.13.2
+          fi
+
+      - name: Install exon
+        run: |
+          gh release download v0.15.1 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
+          tar xzf exon-*.tar.gz && rm exon-*.tar.gz
+          mkdir -p "$HOME/.local/bin" && mv exon "$HOME/.local/bin/"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Test
+        run: |
+          eval "$(intron env)"
+          exon test
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install intron
+        shell: pwsh
+        run: |
+          iwr -useb https://raw.githubusercontent.com/misut/intron/main/install.ps1 | iex
+          echo "$env:USERPROFILE\.intron\bin" >> $env:GITHUB_PATH
+
+      - name: Install toolchains
+        shell: pwsh
+        run: |
+          intron install cmake 4.3.1
+          intron install ninja 1.13.2
+          echo "$env:USERPROFILE\.intron\toolchains\cmake\4.3.1\bin" >> $env:GITHUB_PATH
+          echo "$env:USERPROFILE\.intron\toolchains\ninja\1.13.2" >> $env:GITHUB_PATH
+
+      - name: Install exon
+        shell: pwsh
+        run: |
+          gh release download v0.15.1 -R misut/exon -p "exon-*-x86_64-pc-windows-msvc.zip"
+          Expand-Archive -Path exon-*.zip -DestinationPath .
+          mkdir -Force "$env:USERPROFILE\.local\bin" | Out-Null
+          mv exon.exe "$env:USERPROFILE\.local\bin\"
+          echo "$env:USERPROFILE\.local\bin" >> $env:GITHUB_PATH
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Test
+        shell: cmd
+        run: exon test

@@ -1,0 +1,8 @@
+[package]
+name = "cppx"
+version = "0.1.0"
+description = "C++ extension library: portable reflection, platform detection, and environment shims for misut projects"
+authors = ["Geunryeol Park (misut)"]
+license = "MIT"
+type = "lib"
+standard = 23
