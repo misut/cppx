@@ -18,6 +18,7 @@ target_sources(cppx-modules
     PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
 )
@@ -27,10 +28,11 @@ add_library(cppx ALIAS cppx-modules)
 set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"0.2.0\""
+    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"0.3.0\""
 )
 
 target_compile_options(cppx-modules PRIVATE
@@ -56,6 +58,23 @@ target_compile_options(test-env PRIVATE
 )
 
 target_link_options(test-env PRIVATE
+    -fsanitize=address,undefined
+)
+
+add_executable(test-env_system)
+target_sources(test-env_system PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/env_system.cpp
+)
+target_link_libraries(test-env_system PRIVATE
+    cppx-modules
+)
+
+target_compile_options(test-env_system PRIVATE
+    -fsanitize=address,undefined
+    -fno-omit-frame-pointer
+)
+
+target_link_options(test-env_system PRIVATE
     -fsanitize=address,undefined
 )
 

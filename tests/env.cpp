@@ -1,22 +1,37 @@
+// Pure tests for cppx.env. No setenv, no real PATH, no real HOME —
+// every assertion runs against in-memory fakes so the suite is
+// order-independent and parallel-safe. The impure layer is smoke
+// tested separately in tests/env_system.cpp.
+
 import cppx.env;
 import std;
 
-// `setenv` / `_putenv_s` are POSIX/Win32 extensions, not part of `import std;`.
-// Forward-declare so the test can set env vars without pulling in headers.
-#if defined(_WIN32)
-extern "C" int _putenv_s(char const*, char const*);
-#else
-extern "C" int setenv(char const*, char const*, int);
-#endif
-
 int failed = 0;
-
 void check(bool cond, std::string_view msg) {
     if (!cond) {
         std::println(std::cerr, "FAIL: {}", msg);
         ++failed;
     }
 }
+
+// In-memory env_source. Treats empty values as "missing" to match
+// the cppx.env contract.
+struct fake_env {
+    std::map<std::string, std::string, std::less<>> vars;
+    std::optional<std::string> get(std::string_view name) const {
+        if (auto it = vars.find(name); it != vars.end() && !it->second.empty())
+            return it->second;
+        return std::nullopt;
+    }
+};
+
+// In-memory fs_source. A path is "a regular file" iff it's in the set.
+struct fake_fs {
+    std::set<std::filesystem::path> files;
+    bool is_regular_file(std::filesystem::path const& p) const {
+        return files.contains(p);
+    }
+};
 
 void test_constants() {
 #if defined(_WIN32)
@@ -30,52 +45,90 @@ void test_constants() {
 }
 
 void test_get() {
-    // Unset variable returns nullopt. Use a name unlikely to be in the env.
-    auto missing = cppx::env::get("CPPX_TEST_DEFINITELY_UNSET_42");
-    check(!missing.has_value(), "unset env var is nullopt");
-
-    // Set a variable and read it back.
-#if defined(_WIN32)
-    ::_putenv_s("CPPX_TEST_VAR", "hello");
-#else
-    ::setenv("CPPX_TEST_VAR", "hello", 1);
-#endif
-    auto present = cppx::env::get("CPPX_TEST_VAR");
-    check(present.has_value() && *present == "hello", "set env var read-back");
-
-    // Empty string is treated as "not provided".
-#if defined(_WIN32)
-    ::_putenv_s("CPPX_TEST_EMPTY", "");
-#else
-    ::setenv("CPPX_TEST_EMPTY", "", 1);
-#endif
-    auto empty = cppx::env::get("CPPX_TEST_EMPTY");
-    check(!empty.has_value(), "empty env var treated as nullopt");
+    auto const env = fake_env{{{"FOO", "hello"}, {"EMPTY", ""}}};
+    check(!cppx::env::get(env, "MISSING").has_value(),
+          "get: missing → nullopt");
+    auto const foo = cppx::env::get(env, "FOO");
+    check(foo.has_value() && *foo == "hello",
+          "get: FOO → hello");
+    check(!cppx::env::get(env, "EMPTY").has_value(),
+          "get: empty string → nullopt");
 }
 
 void test_home_dir() {
-    // HOME is set in every reasonable dev/CI environment.
-    auto h = cppx::env::home_dir();
-    check(h.has_value(), "home_dir returns a value");
-    if (h) {
-        // The returned path should be absolute (or at least non-empty).
-        check(!h->empty(), "home_dir is non-empty");
-    }
+    // No HOME → nullopt.
+    check(!cppx::env::home_dir(cppx::env::null_env{}).has_value(),
+          "home_dir: empty env → nullopt");
+
+    // HOME set → returns it.
+    auto const env = fake_env{{{"HOME", "/home/alice"}}};
+    auto const h = cppx::env::home_dir(env);
+    check(h.has_value() && *h == std::filesystem::path{"/home/alice"},
+          "home_dir: HOME → /home/alice");
+
+#if defined(_WIN32)
+    // No HOME, USERPROFILE set → falls back to USERPROFILE.
+    auto const winenv = fake_env{{{"USERPROFILE", "C:\\Users\\Alice"}}};
+    auto const wh = cppx::env::home_dir(winenv);
+    check(wh.has_value() &&
+              *wh == std::filesystem::path{"C:\\Users\\Alice"},
+          "home_dir: USERPROFILE fallback");
+#endif
 }
 
-void test_find_in_path() {
-    // `cmake` is installed via intron in the mise.toml and is on PATH in CI.
-    auto cmake = cppx::env::find_in_path("cmake");
-    check(cmake.has_value(), "find_in_path finds cmake");
-    if (cmake) {
-        std::error_code ec;
-        check(std::filesystem::is_regular_file(*cmake, ec),
-              "find_in_path result is a regular file");
-    }
+void test_find_in_path_no_path_set() {
+    auto const r = cppx::env::find_in_path(
+        cppx::env::null_env{}, cppx::env::null_fs{}, "cmake");
+    check(!r.has_value() &&
+              r.error() == cppx::env::find_error::no_PATH_set,
+          "find_in_path: no PATH → no_PATH_set");
+}
 
-    // Nonsense name should not resolve.
-    auto nope = cppx::env::find_in_path("cppx_definitely_not_a_real_binary_zzz");
-    check(!nope.has_value(), "find_in_path returns nullopt for missing binary");
+void test_find_in_path_not_found() {
+#if defined(_WIN32)
+    auto const env = fake_env{{{"PATH", "C:\\bin;C:\\usr\\bin"}}};
+#else
+    auto const env = fake_env{{{"PATH", "/usr/bin:/bin"}}};
+#endif
+    auto const fs = fake_fs{};
+    auto const r = cppx::env::find_in_path(env, fs, "ghost");
+    check(!r.has_value() &&
+              r.error() == cppx::env::find_error::not_found_on_PATH,
+          "find_in_path: missing binary → not_found_on_PATH");
+}
+
+void test_find_in_path_first_match() {
+#if defined(_WIN32)
+    auto const env = fake_env{{{"PATH", "C:\\bin;C:\\opt\\bin"}}};
+    auto const fs = fake_fs{
+        {std::filesystem::path{"C:\\opt\\bin\\cmake.exe"}}};
+    auto const r = cppx::env::find_in_path(env, fs, "cmake");
+    check(r.has_value() &&
+              *r == std::filesystem::path{"C:\\opt\\bin\\cmake.exe"},
+          "find_in_path: Windows .exe suffix in second dir");
+#else
+    auto const env = fake_env{{{"PATH", "/usr/bin:/opt/bin"}}};
+    auto const fs = fake_fs{{std::filesystem::path{"/opt/bin/cmake"}}};
+    auto const r = cppx::env::find_in_path(env, fs, "cmake");
+    check(r.has_value() &&
+              *r == std::filesystem::path{"/opt/bin/cmake"},
+          "find_in_path: hit in /opt/bin");
+#endif
+}
+
+void test_find_in_path_skips_empty_segments() {
+    // PATH="::/opt/bin" should still find /opt/bin/tool, ignoring
+    // the leading empty segments.
+#if defined(_WIN32)
+    auto const env = fake_env{{{"PATH", ";;C:\\opt\\bin"}}};
+    auto const fs = fake_fs{
+        {std::filesystem::path{"C:\\opt\\bin\\tool.exe"}}};
+#else
+    auto const env = fake_env{{{"PATH", "::/opt/bin"}}};
+    auto const fs = fake_fs{{std::filesystem::path{"/opt/bin/tool"}}};
+#endif
+    auto const r = cppx::env::find_in_path(env, fs, "tool");
+    check(r.has_value(), "find_in_path: skips empty PATH segments");
 }
 
 void test_shell_quote() {
@@ -91,7 +144,10 @@ int main() {
     test_constants();
     test_get();
     test_home_dir();
-    test_find_in_path();
+    test_find_in_path_no_path_set();
+    test_find_in_path_not_found();
+    test_find_in_path_first_match();
+    test_find_in_path_skips_empty_segments();
     test_shell_quote();
 
     if (failed > 0) {

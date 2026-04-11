@@ -7,3 +7,4 @@ export module cppx;
 export import cppx.reflect;
 export import cppx.platform;
 export import cppx.env;
+export import cppx.env.system;
