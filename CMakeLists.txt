@@ -32,16 +32,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"0.3.0\""
-)
-
-target_compile_options(cppx-modules PRIVATE
-    -fsanitize=address,undefined
-    -fno-omit-frame-pointer
-)
-
-target_link_options(cppx-modules PRIVATE
-    -fsanitize=address,undefined
+    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"0.3.1\""
 )
 
 add_executable(test-env)
@@ -52,30 +43,12 @@ target_link_libraries(test-env PRIVATE
     cppx-modules
 )
 
-target_compile_options(test-env PRIVATE
-    -fsanitize=address,undefined
-    -fno-omit-frame-pointer
-)
-
-target_link_options(test-env PRIVATE
-    -fsanitize=address,undefined
-)
-
 add_executable(test-env_system)
 target_sources(test-env_system PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/env_system.cpp
 )
 target_link_libraries(test-env_system PRIVATE
     cppx-modules
-)
-
-target_compile_options(test-env_system PRIVATE
-    -fsanitize=address,undefined
-    -fno-omit-frame-pointer
-)
-
-target_link_options(test-env_system PRIVATE
-    -fsanitize=address,undefined
 )
 
 add_executable(test-platform)
@@ -86,28 +59,10 @@ target_link_libraries(test-platform PRIVATE
     cppx-modules
 )
 
-target_compile_options(test-platform PRIVATE
-    -fsanitize=address,undefined
-    -fno-omit-frame-pointer
-)
-
-target_link_options(test-platform PRIVATE
-    -fsanitize=address,undefined
-)
-
 add_executable(test-reflect)
 target_sources(test-reflect PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/reflect.cpp
 )
 target_link_libraries(test-reflect PRIVATE
     cppx-modules
-)
-
-target_compile_options(test-reflect PRIVATE
-    -fsanitize=address,undefined
-    -fno-omit-frame-pointer
-)
-
-target_link_options(test-reflect PRIVATE
-    -fsanitize=address,undefined
 )
