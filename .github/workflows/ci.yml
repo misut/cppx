@@ -49,12 +49,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local/bin/exon
-          key: exon-v0.19.0-${{ runner.os }}-${{ runner.arch }}
+          key: exon-v0.21.1-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install exon
         run: |
           if [ ! -x "$HOME/.local/bin/exon" ]; then
-            gh release download v0.19.0 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
+            gh release download v0.21.1 -R misut/exon -p "exon-*-${{ matrix.platform }}.tar.gz"
             tar xzf exon-*.tar.gz && rm exon-*.tar.gz
             mkdir -p "$HOME/.local/bin" && mv exon "$HOME/.local/bin/"
           fi
@@ -99,13 +99,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local/bin/exon.exe
-          key: exon-v0.19.0-${{ runner.os }}-${{ runner.arch }}
+          key: exon-v0.21.1-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install exon
         shell: pwsh
         run: |
           if (-not (Test-Path "$env:USERPROFILE\.local\bin\exon.exe")) {
-            gh release download v0.19.0 -R misut/exon -p "exon-*-x86_64-pc-windows-msvc.zip"
+            gh release download v0.21.1 -R misut/exon -p "exon-*-x86_64-pc-windows-msvc.zip"
             Expand-Archive -Path exon-*.zip -DestinationPath .
             mkdir -Force "$env:USERPROFILE\.local\bin" | Out-Null
             mv exon.exe "$env:USERPROFILE\.local\bin\"
