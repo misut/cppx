@@ -63,6 +63,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Test
+        env:
+          # Sanitizers are wired via env vars (not [target.cfg.build]) so
+          # the published .a archive is clean — see exon.toml note.
+          EXON_CXXFLAGS: "-fsanitize=address,undefined -fno-omit-frame-pointer"
+          EXON_LDFLAGS: "-fsanitize=address,undefined"
         run: |
           eval "$(intron env)"
           exon test
@@ -116,4 +121,6 @@ jobs:
 
       - name: Test
         shell: cmd
+        env:
+          EXON_CXXFLAGS: /fsanitize=address
         run: exon test

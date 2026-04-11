@@ -1,23 +1,17 @@
 [package]
 name = "cppx"
-version = "0.3.0"
+version = "0.3.1"
 description = "C++ extension library: portable reflection, platform detection, and environment shims"
 authors = ["Geunryeol Park (misut)"]
 license = "MIT"
 type = "lib"
 standard = 23
 
-# Sanitizer CI: ASan/UBSan/LSan on macOS and Linux, MSVC AddressSanitizer on Windows.
-# All flags PRIVATE on the cppx-modules target so add_subdirectory consumers
-# don't inherit them. macOS/Linux use clang's `-fsanitize=address,undefined`;
-# Windows MSVC uses `/fsanitize=address` (LSan is unavailable on MSVC).
-[target.'cfg(os = "linux")'.build]
-cxxflags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-ldflags  = ["-fsanitize=address,undefined"]
-
-[target.'cfg(os = "macos")'.build]
-cxxflags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-ldflags  = ["-fsanitize=address,undefined"]
-
-[target.'cfg(os = "windows")'.build]
-cxxflags = ["/fsanitize=address"]
+# Note: sanitizer CI is wired via EXON_CXXFLAGS / EXON_LDFLAGS in
+# .github/workflows/ci.yml, NOT via [target.cfg.build] sections. The
+# declarative form bakes sanitizer instrumentation into the .a archive,
+# which then forces every downstream FetchContent consumer to also link
+# the sanitizer runtimes — defeating the "exon-managed projects must be
+# importable by raw cmake + ninja" design goal. The env-var path only
+# flows through the cmake CLI for cppx's own build, leaving the
+# checked-in CMakeLists.txt clean for consumers.
