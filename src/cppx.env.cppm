@@ -1,13 +1,16 @@
-// Environment and shell helpers: cross-platform constants, $HOME lookup,
-// PATH search, and shell quoting. Consolidates shims previously duplicated
-// across misut/exon and misut/intron.
+// Pure environment helpers. Side effects (std::getenv,
+// std::filesystem) are pushed out to cppx.env.system. Everything in
+// this module is a pure function over an injected capability so
+// tests can substitute fakes and consumers can compose without
+// touching real OS state.
 
 export module cppx.env;
 import std;
 
 export namespace cppx::env {
 
-// Platform-independent constants.
+// ---- constants -----------------------------------------------------------
+
 #if defined(_WIN32)
 inline constexpr char PATH_SEPARATOR = ';';
 inline constexpr std::string_view EXE_SUFFIX = ".exe";
@@ -16,79 +19,108 @@ inline constexpr char PATH_SEPARATOR = ':';
 inline constexpr std::string_view EXE_SUFFIX = "";
 #endif
 
-// Returns the named environment variable. Returns std::nullopt when the
-// variable is unset OR set to an empty string — callers typically treat
-// both as "not provided".
-inline std::optional<std::string> get(std::string_view name) {
-    // std::getenv takes a null-terminated C string.
-    auto buf = std::string{name};
-    if (auto const* v = std::getenv(buf.c_str()); v && *v)
-        return std::string{v};
-    return std::nullopt;
+// ---- capability concepts -------------------------------------------------
+
+// Anything that can answer "what's the value of $NAME?". Returns
+// nullopt for unset OR empty (callers treat both as "missing").
+template <class T>
+concept env_source = requires(T const& t, std::string_view name) {
+    { t.get(name) } -> std::same_as<std::optional<std::string>>;
+};
+
+// Anything that can answer "is this path a regular file?".
+template <class T>
+concept fs_source = requires(T const& t, std::filesystem::path const& p) {
+    { t.is_regular_file(p) } -> std::same_as<bool>;
+};
+
+// ---- errors --------------------------------------------------------------
+
+enum class find_error {
+    no_PATH_set,        // $PATH itself is unset
+    not_found_on_PATH,  // $PATH is set but `name` not found
+};
+
+// ---- pure functions ------------------------------------------------------
+
+// Symmetric one-line forwarder so callers can route every env read
+// through cppx::env::get and only swap the capability at the edge.
+template <env_source E>
+std::optional<std::string> get(E const& env, std::string_view name) {
+    return env.get(name);
 }
 
-// Returns the user's home directory. Checks $HOME first, falls back to
-// %USERPROFILE% on Windows. Returns std::nullopt if neither is set —
-// callers decide whether to throw, default, or propagate.
-inline std::optional<std::filesystem::path> home_dir() {
-    if (auto h = get("HOME"))
+// Returns the user's home directory. Checks $HOME first, falls back
+// to %USERPROFILE% on Windows. Pure with respect to `env`.
+template <env_source E>
+std::optional<std::filesystem::path> home_dir(E const& env) {
+    if (auto h = env.get("HOME"))
         return std::filesystem::path{*h};
 #if defined(_WIN32)
-    if (auto up = get("USERPROFILE"))
+    if (auto up = env.get("USERPROFILE"))
         return std::filesystem::path{*up};
 #endif
     return std::nullopt;
 }
 
-// Searches PATH for an executable named `name`. On Windows, appends
-// EXE_SUFFIX if the name has no extension. Returns the first match, or
-// std::nullopt if not found. Matches must be regular files (not dirs).
-inline std::optional<std::filesystem::path> find_in_path(std::string_view name) {
-    auto path_env = get("PATH");
+// Searches PATH for an executable named `name`. Returns the first
+// match. Distinguishes "PATH unset" from "name not found" so
+// consumers can give better error messages.
+template <env_source E, fs_source F>
+std::expected<std::filesystem::path, find_error>
+find_in_path(E const& env, F const& fs, std::string_view name) {
+    auto path_env = env.get("PATH");
     if (!path_env)
-        return std::nullopt;
+        return std::unexpected{find_error::no_PATH_set};
 
     // On Windows, also try `<name>.exe` if `name` has no extension.
-    std::string with_suffix;
-    std::string_view candidates[2] = {name, {}};
-    std::size_t candidate_count = 1;
+    auto candidates = std::vector<std::string>{std::string{name}};
 #if defined(_WIN32)
-    auto stem = std::filesystem::path{name};
-    if (!stem.has_extension()) {
-        with_suffix = std::string{name} + std::string{EXE_SUFFIX};
-        candidates[1] = with_suffix;
-        candidate_count = 2;
-    }
+    if (!std::filesystem::path{name}.has_extension())
+        candidates.push_back(std::string{name} + std::string{EXE_SUFFIX});
 #endif
 
-    auto const& dirs = *path_env;
-    std::size_t pos = 0;
-    while (pos <= dirs.size()) {
-        auto sep = dirs.find(PATH_SEPARATOR, pos);
-        auto end = (sep == std::string::npos) ? dirs.size() : sep;
-        if (end > pos) {
-            auto dir = std::filesystem::path{dirs.substr(pos, end - pos)};
-            for (std::size_t i = 0; i < candidate_count; ++i) {
-                auto full = dir / std::string{candidates[i]};
-                std::error_code ec;
-                if (std::filesystem::is_regular_file(full, ec))
-                    return full;
-            }
+    namespace rv = std::ranges::views;
+    auto const sep = std::string_view{&PATH_SEPARATOR, 1};
+
+    for (auto dir_chars : *path_env | rv::split(sep)) {
+        auto const dir_sv = std::string_view{
+            std::ranges::begin(dir_chars), std::ranges::end(dir_chars)};
+        if (dir_sv.empty()) continue;
+        auto const dir = std::filesystem::path{dir_sv};
+        for (auto const& cand : candidates) {
+            auto full = dir / cand;
+            if (fs.is_regular_file(full))
+                return full;
         }
-        if (sep == std::string::npos) break;
-        pos = sep + 1;
     }
-    return std::nullopt;
+    return std::unexpected{find_error::not_found_on_PATH};
 }
 
-// Wraps `s` in double quotes if it contains whitespace, otherwise returns
-// it unchanged. Suitable for piecewise std::system() command construction.
-// Does NOT escape inner quotes or backslashes — this is not a general
-// shell-escape routine, just a whitespace-safe path wrapper.
+// ---- pure helper ---------------------------------------------------------
+
+// Wraps `s` in double quotes if it contains whitespace, otherwise
+// returns it unchanged. NOT a general shell escape — just a
+// whitespace-safe path wrapper for std::system() command building.
 inline std::string shell_quote(std::string_view s) {
     if (s.find_first_of(" \t") == std::string_view::npos)
         return std::string{s};
     return std::format("\"{}\"", s);
 }
+
+// ---- test doubles --------------------------------------------------------
+
+// Empty capabilities that always answer "missing". Exported so
+// downstream consumers can compose them into their own fakes.
+struct null_env {
+    std::optional<std::string> get(std::string_view) const {
+        return std::nullopt;
+    }
+};
+struct null_fs {
+    bool is_regular_file(std::filesystem::path const&) const {
+        return false;
+    }
+};
 
 } // namespace cppx::env
