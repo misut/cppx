@@ -95,10 +95,20 @@ constexpr auto to_tuple(T&& obj) noexcept {
 }
 
 // Fake static instance used for taking compile-time pointers to fields.
+// Uses a union with an explicit no-op destructor so that T's default
+// constructor is NEVER called: this avoids tripping MSVC's constexpr
+// heap-allocation tracker for T's whose default ctor it (sometimes
+// incorrectly) flags as allocating, e.g. std::string.
+//
+// We never read `value` — the only operations are forming references
+// to its subobjects via structured bindings, which decay to addresses
+// the compiler resolves symbolically (no runtime touch).
 template<typename T>
-struct storage {
+union storage {
+    char _;
     T value;
-    constexpr storage() noexcept(std::is_nothrow_default_constructible_v<T>) : value{} {}
+    constexpr storage() noexcept : _{} {}
+    constexpr ~storage() noexcept {}
 };
 
 template<typename T>
