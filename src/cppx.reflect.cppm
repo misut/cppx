@@ -5,7 +5,7 @@
 // Limitations:
 //   - Aggregates with nested aggregates may overcount due to brace elision;
 //     use an explicit descriptor override for such types.
-//   - Max 16 direct fields.
+//   - Max 24 direct fields.
 //   - Clang (__PRETTY_FUNCTION__) / MSVC (__FUNCSIG__).
 //   - Requires T to be default-constructible (for name extraction).
 
@@ -31,7 +31,7 @@ consteval bool is_n_initializable() {
     }(std::make_index_sequence<N>{});
 }
 
-inline constexpr std::size_t kMaxFields = 16;
+inline constexpr std::size_t kMaxFields = 24;
 
 // Count fields: largest N in [0, kMaxFields] for which T{any, ..., any} compiles.
 template<typename T>
@@ -91,7 +91,15 @@ constexpr auto to_tuple(T&& obj) noexcept {
     else if constexpr (N == 14) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n); }
     else if constexpr (N == 15) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o); }
     else if constexpr (N == 16) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p); }
-    else { static_assert(N <= 16, "cppx.reflect: field count out of range"); }
+    else if constexpr (N == 17) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q); }
+    else if constexpr (N == 18) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r); }
+    else if constexpr (N == 19) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s); }
+    else if constexpr (N == 20) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t); }
+    else if constexpr (N == 21) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u); }
+    else if constexpr (N == 22) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v); }
+    else if constexpr (N == 23) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w); }
+    else if constexpr (N == 24) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x); }
+    else { static_assert(N <= 24, "cppx.reflect: field count out of range"); }
 }
 
 // Fake static instance used for taking compile-time pointers to fields.
