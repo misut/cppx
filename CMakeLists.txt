@@ -19,6 +19,7 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
 )
@@ -29,6 +30,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
     PROPERTIES COMPILE_DEFINITIONS
@@ -83,6 +85,26 @@ if(PROJECT_IS_TOP_LEVEL)
     )
 
     target_link_options(test-env_system PRIVATE
+        -fsanitize=address,undefined
+    )
+endif()
+
+add_executable(test-http)
+target_sources(test-http PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/http.cpp
+)
+target_link_libraries(test-http PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    target_compile_options(test-http PRIVATE
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer
+    )
+
+    target_link_options(test-http PRIVATE
         -fsanitize=address,undefined
     )
 endif()
