@@ -233,10 +233,13 @@ inline void ensure_wsa() {
 
 } // namespace detail
 
+class win_listener; // forward for friend
+
 class win_stream {
     SOCKET fd_ = INVALID_SOCKET;
 
     explicit win_stream(SOCKET fd) : fd_{fd} {}
+    friend class win_listener;
 
 public:
     win_stream() = default;
