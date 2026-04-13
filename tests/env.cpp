@@ -4,15 +4,10 @@
 // tested separately in tests/env_system.cpp.
 
 import cppx.env;
+import cppx.test;
 import std;
 
-int failed = 0;
-void check(bool cond, std::string_view msg) {
-    if (!cond) {
-        std::println(std::cerr, "FAIL: {}", msg);
-        ++failed;
-    }
-}
+cppx::test::context tc;
 
 // In-memory env_source. Treats empty values as "missing" to match
 // the cppx.env contract.
@@ -41,36 +36,36 @@ void test_constants() {
     static_assert(cppx::env::PATH_SEPARATOR == ':');
     static_assert(cppx::env::EXE_SUFFIX == "");
 #endif
-    check(true, "compile-time constants");
+    tc.check(true, "compile-time constants");
 }
 
 void test_get() {
     auto const env = fake_env{{{"FOO", "hello"}, {"EMPTY", ""}}};
-    check(!cppx::env::get(env, "MISSING").has_value(),
+    tc.check(!cppx::env::get(env, "MISSING").has_value(),
           "get: missing → nullopt");
     auto const foo = cppx::env::get(env, "FOO");
-    check(foo.has_value() && *foo == "hello",
+    tc.check(foo.has_value() && *foo == "hello",
           "get: FOO → hello");
-    check(!cppx::env::get(env, "EMPTY").has_value(),
+    tc.check(!cppx::env::get(env, "EMPTY").has_value(),
           "get: empty string → nullopt");
 }
 
 void test_home_dir() {
     // No HOME → nullopt.
-    check(!cppx::env::home_dir(cppx::env::null_env{}).has_value(),
+    tc.check(!cppx::env::home_dir(cppx::env::null_env{}).has_value(),
           "home_dir: empty env → nullopt");
 
     // HOME set → returns it.
     auto const env = fake_env{{{"HOME", "/home/alice"}}};
     auto const h = cppx::env::home_dir(env);
-    check(h.has_value() && *h == std::filesystem::path{"/home/alice"},
+    tc.check(h.has_value() && *h == std::filesystem::path{"/home/alice"},
           "home_dir: HOME → /home/alice");
 
 #if defined(_WIN32)
     // No HOME, USERPROFILE set → falls back to USERPROFILE.
     auto const winenv = fake_env{{{"USERPROFILE", "C:\\Users\\Alice"}}};
     auto const wh = cppx::env::home_dir(winenv);
-    check(wh.has_value() &&
+    tc.check(wh.has_value() &&
               *wh == std::filesystem::path{"C:\\Users\\Alice"},
           "home_dir: USERPROFILE fallback");
 #endif
@@ -79,7 +74,7 @@ void test_home_dir() {
 void test_find_in_path_no_path_set() {
     auto const r = cppx::env::find_in_path(
         cppx::env::null_env{}, cppx::env::null_fs{}, "cmake");
-    check(!r.has_value() &&
+    tc.check(!r.has_value() &&
               r.error() == cppx::env::find_error::no_PATH_set,
           "find_in_path: no PATH → no_PATH_set");
 }
@@ -92,7 +87,7 @@ void test_find_in_path_not_found() {
 #endif
     auto const fs = fake_fs{};
     auto const r = cppx::env::find_in_path(env, fs, "ghost");
-    check(!r.has_value() &&
+    tc.check(!r.has_value() &&
               r.error() == cppx::env::find_error::not_found_on_PATH,
           "find_in_path: missing binary → not_found_on_PATH");
 }
@@ -103,14 +98,14 @@ void test_find_in_path_first_match() {
     auto const fs = fake_fs{
         {std::filesystem::path{"C:\\opt\\bin\\cmake.exe"}}};
     auto const r = cppx::env::find_in_path(env, fs, "cmake");
-    check(r.has_value() &&
+    tc.check(r.has_value() &&
               *r == std::filesystem::path{"C:\\opt\\bin\\cmake.exe"},
           "find_in_path: Windows .exe suffix in second dir");
 #else
     auto const env = fake_env{{{"PATH", "/usr/bin:/opt/bin"}}};
     auto const fs = fake_fs{{std::filesystem::path{"/opt/bin/cmake"}}};
     auto const r = cppx::env::find_in_path(env, fs, "cmake");
-    check(r.has_value() &&
+    tc.check(r.has_value() &&
               *r == std::filesystem::path{"/opt/bin/cmake"},
           "find_in_path: hit in /opt/bin");
 #endif
@@ -128,15 +123,15 @@ void test_find_in_path_skips_empty_segments() {
     auto const fs = fake_fs{{std::filesystem::path{"/opt/bin/tool"}}};
 #endif
     auto const r = cppx::env::find_in_path(env, fs, "tool");
-    check(r.has_value(), "find_in_path: skips empty PATH segments");
+    tc.check(r.has_value(), "find_in_path: skips empty PATH segments");
 }
 
 void test_shell_quote() {
-    check(cppx::env::shell_quote("foo") == "foo", "shell_quote no whitespace");
-    check(cppx::env::shell_quote("") == "", "shell_quote empty");
-    check(cppx::env::shell_quote("hello world") == "\"hello world\"",
+    tc.check(cppx::env::shell_quote("foo") == "foo", "shell_quote no whitespace");
+    tc.check(cppx::env::shell_quote("") == "", "shell_quote empty");
+    tc.check(cppx::env::shell_quote("hello world") == "\"hello world\"",
           "shell_quote with space");
-    check(cppx::env::shell_quote("tab\there") == "\"tab\there\"",
+    tc.check(cppx::env::shell_quote("tab\there") == "\"tab\there\"",
           "shell_quote with tab");
 }
 
@@ -149,11 +144,5 @@ int main() {
     test_find_in_path_first_match();
     test_find_in_path_skips_empty_segments();
     test_shell_quote();
-
-    if (failed > 0) {
-        std::println(std::cerr, "\n{} test(s) failed", failed);
-        return 1;
-    }
-    std::println("all cppx.env tests passed");
-    return 0;
+    return tc.summary("cppx.env");
 }
