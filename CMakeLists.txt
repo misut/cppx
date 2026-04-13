@@ -50,6 +50,9 @@ if(PROJECT_IS_TOP_LEVEL)
 
     target_link_options(cppx-modules PRIVATE
         -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
     )
 endif()
 
@@ -70,6 +73,9 @@ if(PROJECT_IS_TOP_LEVEL)
 
     target_link_options(test-env PRIVATE
         -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
     )
 endif()
 
@@ -90,6 +96,9 @@ if(PROJECT_IS_TOP_LEVEL)
 
     target_link_options(test-env_system PRIVATE
         -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
     )
 endif()
 
@@ -110,6 +119,9 @@ if(PROJECT_IS_TOP_LEVEL)
 
     target_link_options(test-http PRIVATE
         -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
     )
 endif()
 
@@ -130,6 +142,9 @@ if(PROJECT_IS_TOP_LEVEL)
 
     target_link_options(test-http_client PRIVATE
         -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
     )
 endif()
 
@@ -150,6 +165,9 @@ if(PROJECT_IS_TOP_LEVEL)
 
     target_link_options(test-http_system PRIVATE
         -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
     )
 endif()
 
@@ -170,6 +188,9 @@ if(PROJECT_IS_TOP_LEVEL)
 
     target_link_options(test-platform PRIVATE
         -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
     )
 endif()
 
@@ -190,5 +211,8 @@ if(PROJECT_IS_TOP_LEVEL)
 
     target_link_options(test-reflect PRIVATE
         -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
     )
 endif()
