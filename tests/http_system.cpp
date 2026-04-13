@@ -84,15 +84,44 @@ void test_dns_resolution() {
     }
 }
 
+void test_https_get() {
+    // Real HTTPS GET via platform TLS.
+    auto resp = cppx::http::system::get(
+        "https://www.google.com/robots.txt");
+    check(resp.has_value(), "HTTPS GET succeeds");
+    if (resp) {
+        check(resp->stat.code == 200, "HTTPS status 200");
+        check(!resp->body.empty(), "HTTPS body non-empty");
+        check(resp->body_string().contains("User-agent"),
+              "robots.txt contains User-agent");
+    }
+}
+
+void test_https_download() {
+    auto tmp = std::filesystem::temp_directory_path() /
+               "cppx_test_https_dl.txt";
+    auto r = cppx::http::system::download(
+        "https://www.google.com/robots.txt", tmp);
+    check(r.has_value(), "HTTPS download succeeds");
+    if (r) {
+        check(std::filesystem::exists(tmp), "downloaded file exists");
+        check(std::filesystem::file_size(tmp) > 0,
+              "downloaded file non-empty");
+        std::filesystem::remove(tmp);
+    }
+}
+
 int main() {
     test_tcp_roundtrip();
     test_connect_refused();
     test_dns_resolution();
+    test_https_get();
+    test_https_download();
 
     if (failed > 0) {
         std::println(std::cerr, "\n{} test(s) failed", failed);
         return 1;
     }
-    std::println("cppx.http.system socket smoke test passed");
+    std::println("cppx.http.system smoke test passed");
     return 0;
 }

@@ -15,11 +15,11 @@ standard = 23
 # consumers see a clean libcppx-modules.a.
 [target.'cfg(os = "linux")'.build]
 cxxflags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-ldflags  = ["-fsanitize=address,undefined"]
+ldflags  = ["-fsanitize=address,undefined", "-lssl", "-lcrypto"]
 
 [target.'cfg(os = "macos")'.build]
 cxxflags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-ldflags  = ["-fsanitize=address,undefined"]
+ldflags  = ["-fsanitize=address,undefined", "-framework", "Security", "-Wl,-framework,CoreFoundation"]
 
 [target.'cfg(os = "windows")'.build]
 cxxflags = ["/fsanitize=address"]
