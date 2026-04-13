@@ -13,6 +13,10 @@ if(MSVC)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
 
+if(TARGET cppx)
+    return()
+endif()
+
 add_library(cppx-modules)
 target_sources(cppx-modules
     PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
@@ -40,22 +44,46 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.0.0\""
+    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.0.2\""
 )
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    target_compile_options(cppx-modules PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
-    target_link_options(cppx-modules PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
+        target_compile_options(cppx-modules PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(cppx-modules PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(cppx-modules PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(cppx-modules PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(cppx-modules PRIVATE
+            /fsanitize=address
+        )
+    endif()
 endif()
 
 add_executable(test-env)
@@ -68,17 +96,41 @@ target_link_libraries(test-env PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    target_compile_options(test-env PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
-    target_link_options(test-env PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
+        target_compile_options(test-env PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-env PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-env PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-env PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-env PRIVATE
+            /fsanitize=address
+        )
+    endif()
 endif()
 
 add_executable(test-env_system)
@@ -91,17 +143,41 @@ target_link_libraries(test-env_system PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    target_compile_options(test-env_system PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
-    target_link_options(test-env_system PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
+        target_compile_options(test-env_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-env_system PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-env_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-env_system PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-env_system PRIVATE
+            /fsanitize=address
+        )
+    endif()
 endif()
 
 add_executable(test-http)
@@ -114,17 +190,41 @@ target_link_libraries(test-http PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    target_compile_options(test-http PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
-    target_link_options(test-http PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
+        target_compile_options(test-http PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-http PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-http PRIVATE
+            /fsanitize=address
+        )
+    endif()
 endif()
 
 add_executable(test-http_client)
@@ -137,17 +237,41 @@ target_link_libraries(test-http_client PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    target_compile_options(test-http_client PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
-    target_link_options(test-http_client PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
+        target_compile_options(test-http_client PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_client PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-http_client PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_client PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-http_client PRIVATE
+            /fsanitize=address
+        )
+    endif()
 endif()
 
 add_executable(test-http_server)
@@ -160,17 +284,41 @@ target_link_libraries(test-http_server PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    target_compile_options(test-http_server PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
-    target_link_options(test-http_server PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
+        target_compile_options(test-http_server PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_server PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-http_server PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_server PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-http_server PRIVATE
+            /fsanitize=address
+        )
+    endif()
 endif()
 
 add_executable(test-http_system)
@@ -183,17 +331,41 @@ target_link_libraries(test-http_system PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    target_compile_options(test-http_system PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
-    target_link_options(test-http_system PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
+        target_compile_options(test-http_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_system PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-http_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_system PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-http_system PRIVATE
+            /fsanitize=address
+        )
+    endif()
 endif()
 
 add_executable(test-platform)
@@ -206,17 +378,41 @@ target_link_libraries(test-platform PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    target_compile_options(test-platform PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
-    target_link_options(test-platform PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
+        target_compile_options(test-platform PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-platform PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-platform PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-platform PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-platform PRIVATE
+            /fsanitize=address
+        )
+    endif()
 endif()
 
 add_executable(test-reflect)
@@ -229,15 +425,39 @@ target_link_libraries(test-reflect PRIVATE
 
 if(PROJECT_IS_TOP_LEVEL)
 
-    target_compile_options(test-reflect PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
-    target_link_options(test-reflect PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
-    )
+        target_compile_options(test-reflect PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-reflect PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-reflect PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-reflect PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-reflect PRIVATE
+            /fsanitize=address
+        )
+    endif()
 endif()
