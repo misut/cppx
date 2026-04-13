@@ -25,6 +25,7 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.client.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.server.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
@@ -38,6 +39,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.client.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.server.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
@@ -270,6 +272,29 @@ if(PROJECT_IS_TOP_LEVEL)
             /fsanitize=address
         )
     endif()
+endif()
+
+add_executable(test-http_server)
+target_sources(test-http_server PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_server.cpp
+)
+target_link_libraries(test-http_server PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    target_compile_options(test-http_server PRIVATE
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer
+    )
+
+    target_link_options(test-http_server PRIVATE
+        -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
 endif()
 
 add_executable(test-http_system)
