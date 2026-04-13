@@ -6,15 +6,10 @@ import cppx.http;
 import cppx.http.client;
 import cppx.http.server;
 import cppx.http.system;
+import cppx.test;
 import std;
 
-int failed = 0;
-void check(bool cond, std::string_view msg) {
-    if (!cond) {
-        std::println(std::cerr, "FAIL: {}", msg);
-        ++failed;
-    }
-}
+cppx::test::context tc;
 
 void test_route_handler() {
     // Start server with a custom route
@@ -32,7 +27,7 @@ void test_route_handler() {
 
     // Bind to ephemeral port to discover the actual port
     auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
-    check(listener.has_value(), "server bind");
+    tc.check(listener.has_value(), "server bind");
     if (!listener) return;
     auto port = listener->local_port();
     listener->close(); // close so the server can re-bind
@@ -82,15 +77,15 @@ void test_route_handler() {
     auto url = std::format("http://127.0.0.1:{}/api/health", port);
     auto resp = client_t{}.get(url);
 
-    check(resp.has_value(), "client GET succeeds");
+    tc.check(resp.has_value(), "client GET succeeds");
     if (resp) {
-        check(resp->stat.code == 200, "status 200");
-        check(resp->body_string() == R"({"status":"ok"})",
+        tc.check(resp->stat.code == 200, "status 200");
+        tc.check(resp->body_string() == R"({"status":"ok"})",
               "response body matches");
     }
 
     server_thread.join();
-    check(server_done.load(), "server completed");
+    tc.check(server_done.load(), "server completed");
 }
 
 void test_static_file_serving() {
@@ -109,7 +104,7 @@ void test_static_file_serving() {
 
     // Bind ephemeral port
     auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
-    check(listener.has_value(), "static server bind");
+    tc.check(listener.has_value(), "static server bind");
     if (!listener) { std::filesystem::remove_all(tmp); return; }
     auto port = listener->local_port();
     listener->close();
@@ -161,21 +156,21 @@ void test_static_file_serving() {
     // Request 1: /hello.txt
     auto url1 = std::format("http://127.0.0.1:{}/hello.txt", port);
     auto r1 = client_t{}.get(url1);
-    check(r1.has_value(), "GET /hello.txt succeeds");
+    tc.check(r1.has_value(), "GET /hello.txt succeeds");
     if (r1) {
-        check(r1->stat.code == 200, "hello.txt 200");
-        check(r1->body_string() == "hello world", "hello.txt body");
-        check(r1->hdrs.get("content-type") == "text/plain",
+        tc.check(r1->stat.code == 200, "hello.txt 200");
+        tc.check(r1->body_string() == "hello world", "hello.txt body");
+        tc.check(r1->hdrs.get("content-type") == "text/plain",
               "hello.txt MIME type");
     }
 
     // Request 2: / (should map to index.html)
     auto url2 = std::format("http://127.0.0.1:{}/", port);
     auto r2 = client_t{}.get(url2);
-    check(r2.has_value(), "GET / succeeds");
+    tc.check(r2.has_value(), "GET / succeeds");
     if (r2) {
-        check(r2->stat.code == 200, "index.html 200");
-        check(r2->body_string() == "<h1>home</h1>", "index.html body");
+        tc.check(r2->stat.code == 200, "index.html 200");
+        tc.check(r2->body_string() == "<h1>home</h1>", "index.html body");
     }
 
     server_thread.join();
@@ -183,14 +178,14 @@ void test_static_file_serving() {
 }
 
 void test_mime_types() {
-    check(cppx::http::mime_type(".html") == "text/html", ".html");
-    check(cppx::http::mime_type(".css") == "text/css", ".css");
-    check(cppx::http::mime_type(".js") == "application/javascript", ".js");
-    check(cppx::http::mime_type(".wasm") == "application/wasm", ".wasm");
-    check(cppx::http::mime_type(".json") == "application/json", ".json");
-    check(cppx::http::mime_type(".png") == "image/png", ".png");
-    check(cppx::http::mime_type(".svg") == "image/svg+xml", ".svg");
-    check(cppx::http::mime_type(".xyz") == "application/octet-stream",
+    tc.check(cppx::http::mime_type(".html") == "text/html", ".html");
+    tc.check(cppx::http::mime_type(".css") == "text/css", ".css");
+    tc.check(cppx::http::mime_type(".js") == "application/javascript", ".js");
+    tc.check(cppx::http::mime_type(".wasm") == "application/wasm", ".wasm");
+    tc.check(cppx::http::mime_type(".json") == "application/json", ".json");
+    tc.check(cppx::http::mime_type(".png") == "image/png", ".png");
+    tc.check(cppx::http::mime_type(".svg") == "image/svg+xml", ".svg");
+    tc.check(cppx::http::mime_type(".xyz") == "application/octet-stream",
           "unknown extension");
 }
 
@@ -198,11 +193,5 @@ int main() {
     test_mime_types();
     test_route_handler();
     test_static_file_serving();
-
-    if (failed > 0) {
-        std::println(std::cerr, "\n{} test(s) failed", failed);
-        return 1;
-    }
-    std::println("all cppx.http.server tests passed");
-    return 0;
+    return tc.summary("cppx.http.server");
 }

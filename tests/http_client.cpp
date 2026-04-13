@@ -3,15 +3,10 @@
 
 import cppx.http;
 import cppx.http.client;
+import cppx.test;
 import std;
 
-int failed = 0;
-void check(bool cond, std::string_view msg) {
-    if (!cond) {
-        std::println(std::cerr, "FAIL: {}", msg);
-        ++failed;
-    }
-}
+cppx::test::context tc;
 
 // ---- fake engines --------------------------------------------------------
 
@@ -104,11 +99,11 @@ void test_get_200() {
     auto c = cppx::http::client<fake_stream, fake_tls>{};
     auto resp = c.get("http://example.com/api/version");
 
-    check(resp.has_value(), "GET 200 succeeds");
-    check(resp->stat.code == 200, "status 200");
-    check(resp->stat.ok(), "ok()");
-    check(resp->body_string() == R"({"version":"1.0"})", "body");
-    check(resp->hdrs.get("content-type") == "application/json",
+    tc.check(resp.has_value(), "GET 200 succeeds");
+    tc.check(resp->stat.code == 200, "status 200");
+    tc.check(resp->stat.ok(), "ok()");
+    tc.check(resp->body_string() == R"({"version":"1.0"})", "body");
+    tc.check(resp->hdrs.get("content-type") == "application/json",
           "content-type header");
 }
 
@@ -122,10 +117,10 @@ void test_get_404() {
     auto c = cppx::http::client<fake_stream, fake_tls>{};
     auto resp = c.get("http://example.com/missing");
 
-    check(resp.has_value(), "GET 404 succeeds (HTTP error, not client error)");
-    check(resp->stat.code == 404, "status 404");
-    check(!resp->stat.ok(), "not ok()");
-    check(resp->body_string() == "not found", "body");
+    tc.check(resp.has_value(), "GET 404 succeeds (HTTP error, not client error)");
+    tc.check(resp->stat.code == 404, "status 404");
+    tc.check(!resp->stat.ok(), "not ok()");
+    tc.check(resp->body_string() == "not found", "body");
 }
 
 void test_get_sends_correct_request() {
@@ -136,7 +131,7 @@ void test_get_sends_correct_request() {
 
     auto c = cppx::http::client<fake_stream, fake_tls>{};
     auto resp = c.get("http://api.example.com:8080/v1/data?key=abc");
-    check(resp.has_value(), "get succeeds");
+    tc.check(resp.has_value(), "get succeeds");
 
     // Inspect what was sent to the fake stream
     // We can't easily access the sent data from the moved stream,
@@ -155,8 +150,8 @@ void test_get_https_url() {
     auto c = cppx::http::client<fake_stream, fake_tls>{};
     auto resp = c.get("https://secure.example.com/api");
 
-    check(resp.has_value(), "HTTPS GET succeeds with fake TLS");
-    check(resp->body_string() == "ok", "body");
+    tc.check(resp.has_value(), "HTTPS GET succeeds with fake TLS");
+    tc.check(resp->body_string() == "ok", "body");
 }
 
 void test_post() {
@@ -170,16 +165,16 @@ void test_post() {
     auto resp = c.post("http://example.com/api/items",
                        "application/json", std::move(body));
 
-    check(resp.has_value(), "POST succeeds");
-    check(resp->stat.code == 201, "status 201");
+    tc.check(resp.has_value(), "POST succeeds");
+    tc.check(resp->stat.code == 201, "status 201");
 }
 
 void test_connection_refused() {
     auto c = cppx::http::client<fail_stream, fail_tls>{};
     auto resp = c.get("http://example.com/");
 
-    check(!resp.has_value(), "connection refused → error");
-    check(resp.error() == cppx::http::http_error::connection_failed,
+    tc.check(!resp.has_value(), "connection refused → error");
+    tc.check(resp.error() == cppx::http::http_error::connection_failed,
           "error is connection_failed");
 }
 
@@ -187,8 +182,8 @@ void test_invalid_url() {
     auto c = cppx::http::client<fake_stream, fake_tls>{};
     auto resp = c.get("not-a-url");
 
-    check(!resp.has_value(), "invalid URL → error");
-    check(resp.error() == cppx::http::http_error::url_parse_failed,
+    tc.check(!resp.has_value(), "invalid URL → error");
+    tc.check(resp.error() == cppx::http::http_error::url_parse_failed,
           "error is url_parse_failed");
 }
 
@@ -204,8 +199,8 @@ void test_chunked_response() {
     auto c = cppx::http::client<fake_stream, fake_tls>{};
     auto resp = c.get("http://example.com/chunked");
 
-    check(resp.has_value(), "chunked response parsed");
-    check(resp->body_string() == "hello world", "chunked body assembled");
+    tc.check(resp.has_value(), "chunked response parsed");
+    tc.check(resp->body_string() == "hello world", "chunked body assembled");
 }
 
 void test_head_no_body() {
@@ -222,8 +217,8 @@ void test_head_no_body() {
     // via connection_closed.
     // For our fake, recv returns connection_closed after headers,
     // and the parser should complete.
-    check(resp.has_value(), "HEAD succeeds");
-    check(resp->body.empty(), "HEAD has no body");
+    tc.check(resp.has_value(), "HEAD succeeds");
+    tc.check(resp->body.empty(), "HEAD has no body");
 }
 
 // ---- main ----------------------------------------------------------------
@@ -238,11 +233,5 @@ int main() {
     test_invalid_url();
     test_chunked_response();
     test_head_no_body();
-
-    if (failed > 0) {
-        std::println(std::cerr, "\n{} test(s) failed", failed);
-        return 1;
-    }
-    std::println("all cppx.http.client tests passed");
-    return 0;
+    return tc.summary("cppx.http.client");
 }
