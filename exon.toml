@@ -1,7 +1,7 @@
 [package]
 name = "cppx"
-version = "0.4.1"
-description = "C++ extension library: portable reflection, platform detection, and environment shims"
+version = "1.0.0"
+description = "C++ extension library: reflection, platform detection, environment shims, and HTTP networking"
 authors = ["Geunryeol Park (misut)"]
 license = "MIT"
 type = "lib"
