@@ -487,7 +487,4 @@ inline void run(cppx::async::task<void>& t) {
 
 } // namespace cppx::async::system
 
-#else
-// wasm32-wasi / Windows stub — no async system support yet.
-export module cppx.async.system;
-#endif
+#endif // !__wasi__ && !_WIN32
