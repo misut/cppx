@@ -47,6 +47,7 @@ export module cppx.http.system;
 import std;
 import cppx.http;
 import cppx.http.client;
+import cppx.http.server;
 
 export namespace cppx::http::system {
 
@@ -923,6 +924,14 @@ inline auto download(std::string_view url, std::filesystem::path const& path)
     out.write(reinterpret_cast<char const*>(resp->body.data()),
               static_cast<std::streamsize>(resp->body.size()));
     return {};
+}
+
+// Convenience: start an HTTP server serving static files.
+inline auto serve_static(std::filesystem::path root, std::uint16_t port)
+    -> std::expected<void, cppx::http::net_error> {
+    cppx::http::server<listener, stream> srv;
+    srv.serve_static("/", std::move(root));
+    return srv.run("0.0.0.0", port);
 }
 
 } // namespace cppx::http::system
