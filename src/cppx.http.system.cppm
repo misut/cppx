@@ -44,6 +44,11 @@ module;
 #endif
 
 export module cppx.http.system;
+
+// The HTTP system module is platform-specific (POSIX sockets / WinSock /
+// TLS). On wasm32-wasi there is no socket API, so the module compiles as
+// an empty stub — callers should not import it on that target.
+#if !defined(__wasi__)
 import std;
 import cppx.http;
 import cppx.http.client;
@@ -935,3 +940,4 @@ inline auto serve_static(std::filesystem::path root, std::uint16_t port)
 }
 
 } // namespace cppx::http::system
+#endif // !defined(__wasi__)
