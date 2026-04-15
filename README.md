@@ -1,70 +1,101 @@
 # cppx
 
-C++23 extension library. Portable reflection, platform detection,
-environment shims, and HTTP networking — so each compiler/OS
-wrinkle is solved once instead of per project. MIT License.
+C++23 extension library for projects that want a small, composable
+standard-library-first foundation. `cppx` provides aggregate
+reflection, platform detection, environment helpers, coroutine
+primitives, test utilities, and HTTP building blocks. MIT License.
 
-## Design principles
+## What it is for
 
-cppx is built around two ideas, applied uniformly across every
-module:
+`cppx` is meant to solve the low-level glue once, then reuse it across
+projects:
 
-- **Pure by default.** Every function is a value-returning
-  expression. No raw `new`/`delete`, no statics that outlive the
-  call, no thrown exceptions for control flow. `cppx.reflect` and
-  `cppx.platform` are fully `consteval` / `constexpr`; `cppx.env`
-  and `cppx.http` are templated over capability concepts so they
-  have no observable side effect.
-- **Side effects live at the edge.** When real OS state must be
-  touched (sockets, TLS, `std::getenv`), it is quarantined into a
-  `*.system` submodule. Importing the impure submodule
-  (`import cppx.http.system;`) is the audit signal — grep for it
-  to find every translation unit that touches real state.
+- pure-by-default reflection and environment helpers
+- coroutine primitives with deterministic test support
+- small test utilities for standalone executables
+- HTTP types, parser/serializer, client/server helpers, and system adapters
 
-Failures use monadic return types: `std::optional<T>` for "absence
-is normal" and `std::expected<T, E>` for "this can fail in
-distinguishable ways". Callers chain with `and_then` / `transform`
-/ `or_else` instead of try/catch.
+The library stays close to standard C++23: modules, `std::expected`,
+`std::optional`, coroutines, and `import std;`.
 
 ## Modules
 
-| Module | Purity | Contents |
-|---|---|---|
-| `cppx.reflect` | pure | Minimal aggregate reflection — `Reflectable` concept, `tuple_size_v`, `get<I>`, `name_of<T, I>`. Up to 24 direct fields. |
-| `cppx.platform` | pure | Compile-time host detection — `OS`, `Arch`, `Platform`, `host()`. |
-| `cppx.env` | pure | `PATH_SEPARATOR`, `EXE_SUFFIX`, `shell_quote`, plus `env_source` / `fs_source` capability concepts and pure `get` / `home_dir` / `find_in_path` templates. |
-| `cppx.env.system` | impure | `system_env` / `system_fs` capabilities, convenience forwarders. |
-| `cppx.http` | pure | HTTP types (`method`, `status`, `headers`, `url`, `request`, `response`), HTTP/1.1 incremental parser/serializer, engine concepts (`stream_engine`, `listener_engine`, `tls_provider`), test doubles. |
-| `cppx.http.client` | pure | `client<RawStream, Tls>` — `get`, `head`, `post`, `request`. Transparent http/https via URL scheme. |
-| `cppx.http.server` | pure | `server<Listener, Stream>` — `route`, `serve_static`, `run`. MIME detection, path matching. |
-| `cppx.http.system` | impure | Platform socket engines (POSIX/WinSock), platform TLS (SecureTransport/SChannel/OpenSSL), convenience forwarders (`get`, `download`, `serve_static`). |
-| `cppx` | — | Umbrella. `import cppx;` re-exports reflect, platform, env, env.system. HTTP modules are opt-in. |
+| Module | Purpose |
+| --- | --- |
+| `cppx` | Umbrella module. Re-exports `cppx.reflect`, `cppx.platform`, `cppx.env`, and `cppx.env.system`. |
+| `cppx.reflect` | Aggregate reflection: `Reflectable`, `tuple_size_v`, `get<I>`, `name_of<T, I>()`. |
+| `cppx.platform` | Compile-time host detection: `OS`, `Arch`, `Platform`, `host()`. |
+| `cppx.env` | Pure environment/path helpers such as `get`, `home_dir`, `find_in_path`, `shell_quote`. |
+| `cppx.env.system` | System-backed environment/filesystem adapters for `cppx.env`. |
+| `cppx.async` | Coroutine primitives: `task<T>`, `generator<T>`, `executor_engine`, `run`, `async_scope`, `when_all`. |
+| `cppx.async.system` | System event-loop executor and networking helpers for async I/O. |
+| `cppx.async.test` | Deterministic coroutine test executor with virtual time. |
+| `cppx.test` | Minimal test helpers for standalone executables. |
+| `cppx.http` | Core HTTP types, serializer, parser, concepts, and helpers. |
+| `cppx.http.client` | Generic HTTP client over pluggable stream/TLS backends. |
+| `cppx.http.server` | Generic HTTP server, routing, static file serving, MIME helpers. |
+| `cppx.http.system` | Platform-backed sockets/TLS plus convenience helpers like `get` and `download`. |
 
-## Quick start — HTTP client
+## Quick Start
+
+### Reflection
+
+```cpp
+import cppx.reflect;
+import std;
+
+struct User {
+    std::string name;
+    int age;
+};
+
+static_assert(cppx::reflect::Reflectable<User>);
+static_assert(cppx::reflect::tuple_size_v<User> == 2);
+static_assert(cppx::reflect::name_of<User, 0>() == "name");
+```
+
+### Async with deterministic tests
+
+```cpp
+import cppx.async;
+import cppx.async.test;
+import std;
+
+cppx::async::task<int> answer() {
+    co_return 42;
+}
+
+int main() {
+    auto value = cppx::async::test::run_test(
+        [](cppx::async::test::test_executor&) -> cppx::async::task<int> {
+            co_return co_await answer();
+        });
+
+    std::println("{}", value);
+}
+```
+
+### HTTP client
 
 ```cpp
 import cppx.http.system;
 import std;
 
 int main() {
-    // HTTPS GET (platform TLS automatically selected)
     auto resp = cppx::http::system::get("https://api.github.com/zen");
     if (!resp) {
         std::println(std::cerr, "error: {}",
                      cppx::http::to_string(resp.error()));
         return 1;
     }
-    std::println("status: {} body: {}",
-                 resp->stat.code, resp->body_string());
 
-    // Download to file
-    auto dl = cppx::http::system::download(
-        "https://example.com/archive.tar.gz", "/tmp/archive.tar.gz");
-    if (!dl) return 1;
+    std::println("status={} body={}",
+                 resp->stat.code,
+                 resp->body_string());
 }
 ```
 
-## Quick start — HTTP server
+### HTTP server
 
 ```cpp
 import cppx.http;
@@ -76,64 +107,24 @@ int main() {
     using namespace cppx::http;
 
     server<system::listener, system::stream> srv;
-
-    // Static file serving (replaces python3 -m http.server)
     srv.serve_static("/", "./public");
-
-    // API routes
     srv.route(method::GET, "/api/health",
               [](request const&) -> response {
-        return {.stat = {200}, .hdrs = {},
-                .body = as_bytes(R"({"status":"ok"})")};
-    });
+                  return {
+                      .stat = {200},
+                      .hdrs = {},
+                      .body = as_bytes(R"({"status":"ok"})")
+                  };
+              });
 
-    std::println("listening on http://localhost:3000");
     srv.run("0.0.0.0", 3000);
 }
 ```
 
-## Quick start — pure testing with fakes
-
-```cpp
-import cppx.http;
-import cppx.http.client;
-
-struct fake_stream {
-    inline static std::vector<std::byte> next_response;
-    // satisfies stream_engine — returns canned bytes on recv
-    static auto connect(std::string_view, std::uint16_t)
-        -> std::expected<fake_stream, cppx::http::net_error>;
-    auto send(std::span<std::byte const>) const -> ...;
-    auto recv(std::span<std::byte>) const -> ...;
-    void close() const;
-};
-
-struct fake_tls { /* no-op wrap, satisfies tls_provider */ };
-
-// Pure test — no sockets, no TLS, no network
-auto c = cppx::http::client<fake_stream, fake_tls>{};
-auto resp = c.get("http://example.com/api");
-```
-
-## Supported platforms
-
-| Target | Status |
-|---|---|
-| macOS (aarch64, x86_64) | Full (native + wasm32-wasi for non-HTTP modules) |
-| Linux (x86_64, aarch64) | Full |
-| Windows (x86_64 MSVC) | Full (SChannel body parsing has a known issue — handshake works) |
-| wasm32-wasi | Reflection, platform, env only (WASI sockets not ready) |
-
-## Requirements
-
-- C++23 compiler with `import std;` support — clang ≥22 or MSVC
-  ≥17.14.
-- Build system: [exon](https://github.com/misut/exon) ≥0.21.3.
-- Toolchain manager: [intron](https://github.com/misut/intron) or
-  any environment that provides `clang++`, `cmake`, and `ninja`.
-- Linux: `libssl-dev` for HTTPS support.
-
 ## Build
+
+`cppx` is authored as a C++23 modules project and the generated CMake
+configuration requires CMake 3.30+.
 
 ```sh
 mise install
@@ -142,39 +133,48 @@ eval "$(intron env)"
 exon test
 ```
 
-## Using cppx in your project
+## Using `cppx`
+
+### exon
 
 ```toml
 [dependencies]
-"github.com/misut/cppx" = "1.0.0"
+"github.com/misut/cppx" = "1.0.2"
 ```
 
-## TLS backends
+### CMake
 
-| Platform | Backend | TLS version | Notes |
-|---|---|---|---|
-| macOS | Security.framework (SecureTransport) | TLS 1.2 | Deprecated but functional. Network.framework planned for v2. |
-| Linux | System OpenSSL | TLS 1.2/1.3 | Requires `-lssl -lcrypto`. |
-| Windows | SChannel (SSPI) | TLS 1.2/1.3 | Body parsing fix pending. |
+```cmake
+include(FetchContent)
+FetchContent_Declare(cppx
+    GIT_REPOSITORY https://github.com/misut/cppx.git
+    GIT_TAG v1.0.2
+    GIT_SHALLOW ON
+)
+FetchContent_MakeAvailable(cppx)
+target_link_libraries(your_target PRIVATE cppx)
+```
 
-The `tls_provider` concept allows swapping in a custom TLS
-implementation without changing client code.
+## Notes and limits
 
-## Known limitations
+- `cppx.reflect` supports aggregate types with up to 24 direct fields.
+- Field-name extraction currently targets Clang and MSVC.
+- Nested aggregates may need an explicit descriptor in higher-level libraries that build on reflection.
+- `import cppx;` is intentionally small. HTTP and async modules remain opt-in imports.
+- System modules (`cppx.env.system`, `cppx.async.system`, `cppx.http.system`) are the boundary where real OS/network effects occur.
 
-- **Reflection**: up to 24 direct fields per aggregate; nested
-  aggregates may need manual descriptors due to brace elision.
-- **Windows MSVC**: reflection `external_storage<T>` trips MSVC's
-  constexpr evaluator on `std::string` members (C2131).
-- **Windows SChannel**: HTTPS handshake works but response body
-  parsing has a buffering issue. Fix planned for a follow-up.
-- **wasm32-wasi**: HTTP modules are not available (WASI sockets
-  are pre-standardization).
-- **HTTP server**: thread-per-connection model. Suitable for
-  development servers; not for production load.
+## Tested behavior
+
+Current tests cover:
+
+- reflection field count, field access, and field names
+- platform detection and wildcard matching
+- pure env helpers and system-backed env lookup
+- coroutine tasks, generators, scopes, and deterministic virtual-time testing
+- HTTP URL parsing, headers, serialization, incremental parsing, client behavior, server routing, static serving, and system networking paths
 
 ## Repository
 
 - Remote: `git@github.com:misut/cppx.git`
 - Default branch: `main`
-- Commits follow [Conventional Commits](https://www.conventionalcommits.org/).
+- Commits follow [Conventional Commits](https://www.conventionalcommits.org/)
