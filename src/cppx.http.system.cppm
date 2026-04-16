@@ -641,10 +641,15 @@ class schannel_tls_stream {
     std::vector<char> recv_buf_;
     std::size_t recv_offset_ = 0;
     std::size_t recv_len_ = 0;
+    std::vector<char> enc_buf_;
+    std::size_t enc_len_ = 0;
 
     schannel_tls_stream(win_stream raw, CredHandle cred, CtxtHandle ctx,
                         SecPkgContext_StreamSizes sizes)
-        : raw_{std::move(raw)}, cred_{cred}, ctx_{ctx}, sizes_{sizes}, valid_{true} {}
+        : raw_{std::move(raw)}, cred_{cred}, ctx_{ctx}, sizes_{sizes}, valid_{true},
+          enc_buf_(static_cast<std::size_t>(sizes.cbHeader) +
+                   static_cast<std::size_t>(sizes.cbMaximumMessage) +
+                   static_cast<std::size_t>(sizes.cbTrailer)) {}
 
     friend struct schannel_tls;
 
@@ -748,13 +753,15 @@ public:
         : raw_{std::move(o.raw_)}, cred_{o.cred_}, ctx_{o.ctx_},
           sizes_{o.sizes_}, valid_{std::exchange(o.valid_, false)},
           recv_buf_{std::move(o.recv_buf_)}, recv_offset_{o.recv_offset_},
-          recv_len_{o.recv_len_} {}
+          recv_len_{o.recv_len_}, enc_buf_{std::move(o.enc_buf_)},
+          enc_len_{o.enc_len_} {}
     schannel_tls_stream& operator=(schannel_tls_stream&& o) noexcept {
         if (this != &o) {
             close(); raw_ = std::move(o.raw_); cred_ = o.cred_; ctx_ = o.ctx_;
             sizes_ = o.sizes_; valid_ = std::exchange(o.valid_, false);
             recv_buf_ = std::move(o.recv_buf_); recv_offset_ = o.recv_offset_;
-            recv_len_ = o.recv_len_;
+            recv_len_ = o.recv_len_; enc_buf_ = std::move(o.enc_buf_);
+            enc_len_ = o.enc_len_;
         }
         return *this;
     }
@@ -808,27 +815,67 @@ public:
             self->recv_offset_ += n;
             return n;
         }
-        auto enc_buf = std::vector<char>(sizes_.cbMaximumMessage + 256);
-        std::size_t enc_len = 0;
         for (;;) {
-            auto recv_span = std::span<std::byte>{
-                reinterpret_cast<std::byte*>(enc_buf.data() + enc_len),
-                enc_buf.size() - enc_len};
-            auto n = raw_.recv(recv_span);
-            if (!n) return std::unexpected(n.error());
-            enc_len += *n;
+            if (self->enc_len_ == self->enc_buf_.size()) {
+                auto next = std::max<std::size_t>(
+                    self->enc_buf_.size() * 2,
+                    static_cast<std::size_t>(sizes_.cbHeader) +
+                    static_cast<std::size_t>(sizes_.cbMaximumMessage) +
+                    static_cast<std::size_t>(sizes_.cbTrailer));
+                self->enc_buf_.resize(next);
+            }
+
+            if (self->enc_len_ == 0) {
+                auto recv_span = std::span<std::byte>{
+                    reinterpret_cast<std::byte*>(self->enc_buf_.data()),
+                    self->enc_buf_.size()};
+                auto n = raw_.recv(recv_span);
+                if (!n) return std::unexpected(n.error());
+                self->enc_len_ = *n;
+            }
+
             SecBuffer bufs[4];
-            bufs[0] = {static_cast<unsigned long>(enc_len), SECBUFFER_DATA, enc_buf.data()};
+            bufs[0] = {
+                static_cast<unsigned long>(self->enc_len_),
+                SECBUFFER_DATA,
+                self->enc_buf_.data()
+            };
             bufs[1] = {0, SECBUFFER_EMPTY, nullptr};
             bufs[2] = {0, SECBUFFER_EMPTY, nullptr};
             bufs[3] = {0, SECBUFFER_EMPTY, nullptr};
             SecBufferDesc desc{SECBUFFER_VERSION, 4, bufs};
             auto status = DecryptMessage(const_cast<CtxtHandle*>(&ctx_), &desc, 0, nullptr);
-            if (status == SEC_E_INCOMPLETE_MESSAGE) continue;
+            if (status == SEC_E_INCOMPLETE_MESSAGE) {
+                auto recv_span = std::span<std::byte>{
+                    reinterpret_cast<std::byte*>(self->enc_buf_.data() + self->enc_len_),
+                    self->enc_buf_.size() - self->enc_len_};
+                auto n = raw_.recv(recv_span);
+                if (!n) return std::unexpected(n.error());
+                self->enc_len_ += *n;
+                continue;
+            }
             if (status == SEC_I_CONTEXT_EXPIRED)
                 return std::unexpected(cppx::http::net_error::connection_closed);
             if (status != SEC_E_OK)
                 return std::unexpected(cppx::http::net_error::tls_read_failed);
+
+            // SChannel can decrypt one TLS record while leaving additional
+            // encrypted records in SECBUFFER_EXTRA. Preserve them for the
+            // next recv so higher layers do not lose response bytes.
+            std::size_t extra = 0;
+            for (auto const& sb : bufs)
+                if (sb.BufferType == SECBUFFER_EXTRA)
+                    extra = sb.cbBuffer;
+            if (extra > 0) {
+                std::memmove(
+                    self->enc_buf_.data(),
+                    self->enc_buf_.data() + self->enc_len_ - extra,
+                    extra);
+                self->enc_len_ = extra;
+            } else {
+                self->enc_len_ = 0;
+            }
+
             for (int i = 0; i < 4; ++i) {
                 if (bufs[i].BufferType == SECBUFFER_DATA && bufs[i].cbBuffer > 0) {
                     auto out_n = std::min(buf.size(), static_cast<std::size_t>(bufs[i].cbBuffer));
@@ -842,6 +889,15 @@ public:
                     }
                     return out_n;
                 }
+            }
+
+            if (extra == 0) {
+                auto recv_span = std::span<std::byte>{
+                    reinterpret_cast<std::byte*>(self->enc_buf_.data()),
+                    self->enc_buf_.size()};
+                auto n = raw_.recv(recv_span);
+                if (!n) return std::unexpected(n.error());
+                self->enc_len_ = *n;
             }
         }
     }
