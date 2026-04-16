@@ -103,14 +103,17 @@ void test_https_get() {
 }
 
 void test_https_download() {
-#if defined(_WIN32)
-    // Skip on Windows until SChannel recv is fixed.
-    return;
-#endif
     auto tmp = std::filesystem::temp_directory_path() /
                "cppx_test_https_dl.txt";
+#if defined(_WIN32)
+    auto r = cppx::http::system::download(
+        "https://github.com/misut/cppx/releases/download/v1.0.5/"
+        "cppx-v1.0.5-x86_64-linux-gnu.tar.gz",
+        tmp);
+#else
     auto r = cppx::http::system::download(
         "https://www.google.com/robots.txt", tmp);
+#endif
     tc.check(r.has_value(), "HTTPS download succeeds");
     if (r) {
         tc.check(std::filesystem::exists(tmp), "downloaded file exists");

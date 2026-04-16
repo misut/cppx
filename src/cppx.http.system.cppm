@@ -859,13 +859,38 @@ public:
             if (status != SEC_E_OK)
                 return std::unexpected(cppx::http::net_error::tls_read_failed);
 
-            // SChannel can decrypt one TLS record while leaving additional
-            // encrypted records in SECBUFFER_EXTRA. Preserve them for the
-            // next recv so higher layers do not lose response bytes.
+            std::byte* data_ptr = nullptr;
+            std::size_t data_len = 0;
             std::size_t extra = 0;
-            for (auto const& sb : bufs)
-                if (sb.BufferType == SECBUFFER_EXTRA)
+            for (auto const& sb : bufs) {
+                if (sb.BufferType == SECBUFFER_DATA && sb.cbBuffer > 0) {
+                    data_ptr = static_cast<std::byte*>(sb.pvBuffer);
+                    data_len = sb.cbBuffer;
+                } else if (sb.BufferType == SECBUFFER_EXTRA) {
                     extra = sb.cbBuffer;
+                }
+            }
+
+            std::size_t out_n = 0;
+            if (data_len > 0) {
+                out_n = std::min(buf.size(), data_len);
+                std::memcpy(buf.data(), data_ptr, out_n);
+                if (data_len > out_n) {
+                    self->recv_buf_.assign(
+                        reinterpret_cast<char*>(data_ptr) + out_n,
+                        reinterpret_cast<char*>(data_ptr) + data_len);
+                    self->recv_offset_ = 0;
+                    self->recv_len_ = data_len - out_n;
+                } else {
+                    self->recv_buf_.clear();
+                    self->recv_offset_ = 0;
+                    self->recv_len_ = 0;
+                }
+            }
+
+            // Preserve encrypted tail bytes only after copying plaintext out of
+            // the shared SChannel buffer. Moving SECBUFFER_EXTRA first can
+            // overwrite the current SECBUFFER_DATA payload.
             if (extra > 0) {
                 std::memmove(
                     self->enc_buf_.data(),
@@ -876,20 +901,8 @@ public:
                 self->enc_len_ = 0;
             }
 
-            for (int i = 0; i < 4; ++i) {
-                if (bufs[i].BufferType == SECBUFFER_DATA && bufs[i].cbBuffer > 0) {
-                    auto out_n = std::min(buf.size(), static_cast<std::size_t>(bufs[i].cbBuffer));
-                    std::memcpy(buf.data(), bufs[i].pvBuffer, out_n);
-                    if (bufs[i].cbBuffer > out_n) {
-                        self->recv_buf_.assign(
-                            static_cast<char*>(bufs[i].pvBuffer) + out_n,
-                            static_cast<char*>(bufs[i].pvBuffer) + bufs[i].cbBuffer);
-                        self->recv_offset_ = 0;
-                        self->recv_len_ = bufs[i].cbBuffer - out_n;
-                    }
-                    return out_n;
-                }
-            }
+            if (out_n > 0)
+                return out_n;
 
             if (extra == 0) {
                 auto recv_span = std::span<std::byte>{
