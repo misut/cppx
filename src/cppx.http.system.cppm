@@ -638,20 +638,46 @@ class schannel_tls_stream {
     CtxtHandle ctx_{};
     SecPkgContext_StreamSizes sizes_{};
     bool valid_ = false;
+    std::string host_;
     std::vector<char> recv_buf_;
     std::size_t recv_offset_ = 0;
     std::size_t recv_len_ = 0;
     std::vector<char> enc_buf_;
     std::size_t enc_len_ = 0;
 
+    static constexpr DWORD context_flags =
+        ISC_REQ_REPLAY_DETECT | ISC_REQ_SEQUENCE_DETECT |
+        ISC_REQ_CONFIDENTIALITY | ISC_REQ_ALLOCATE_MEMORY |
+        ISC_REQ_STREAM;
+
     schannel_tls_stream(win_stream raw, CredHandle cred, CtxtHandle ctx,
-                        SecPkgContext_StreamSizes sizes)
+                        SecPkgContext_StreamSizes sizes, std::string host)
         : raw_{std::move(raw)}, cred_{cred}, ctx_{ctx}, sizes_{sizes}, valid_{true},
+          host_{std::move(host)},
           enc_buf_(static_cast<std::size_t>(sizes.cbHeader) +
                    static_cast<std::size_t>(sizes.cbMaximumMessage) +
                    static_cast<std::size_t>(sizes.cbTrailer)) {}
 
     friend struct schannel_tls;
+
+    static auto send_token(win_stream& raw, SecBuffer& out_buf)
+        -> std::expected<void, cppx::http::net_error>
+    {
+        if (out_buf.cbBuffer == 0 || out_buf.pvBuffer == nullptr)
+            return {};
+        auto data = std::span<std::byte const>{
+            static_cast<std::byte*>(out_buf.pvBuffer), out_buf.cbBuffer};
+        while (!data.empty()) {
+            auto n = raw.send(data);
+            if (!n) {
+                FreeContextBuffer(out_buf.pvBuffer);
+                return std::unexpected(n.error());
+            }
+            data = data.subspan(*n);
+        }
+        FreeContextBuffer(out_buf.pvBuffer);
+        return {};
+    }
 
     static auto do_handshake(win_stream& raw, std::string_view hostname,
                              CredHandle& cred, CtxtHandle& ctx)
@@ -667,31 +693,18 @@ class schannel_tls_stream {
         auto host_str = std::string{hostname};
         SecBuffer out_buf{0, SECBUFFER_TOKEN, nullptr};
         SecBufferDesc out_desc{SECBUFFER_VERSION, 1, &out_buf};
-        DWORD flags = ISC_REQ_REPLAY_DETECT | ISC_REQ_SEQUENCE_DETECT |
-                      ISC_REQ_CONFIDENTIALITY | ISC_REQ_ALLOCATE_MEMORY |
-                      ISC_REQ_STREAM;
         DWORD out_flags = 0;
 
         auto status = InitializeSecurityContextA(&cred, nullptr, host_str.data(),
-            flags, 0, 0, nullptr, 0, &ctx, &out_desc, &out_flags, nullptr);
+            context_flags, 0, 0, nullptr, 0, &ctx, &out_desc, &out_flags, nullptr);
 
         if (status != SEC_I_CONTINUE_NEEDED) {
             FreeCredentialsHandle(&cred);
             return std::unexpected(cppx::http::net_error::tls_handshake_failed);
         }
 
-        // Send initial token
-        if (out_buf.cbBuffer > 0 && out_buf.pvBuffer) {
-            auto data = std::span<std::byte const>{
-                static_cast<std::byte*>(out_buf.pvBuffer), out_buf.cbBuffer};
-            auto total = data.size();
-            while (!data.empty()) {
-                auto n = raw.send(data);
-                if (!n) { FreeContextBuffer(out_buf.pvBuffer); return std::unexpected(n.error()); }
-                data = data.subspan(*n);
-            }
-            FreeContextBuffer(out_buf.pvBuffer);
-        }
+        auto initial_send = send_token(raw, out_buf);
+        if (!initial_send) return std::unexpected(initial_send.error());
 
         // Handshake loop
         std::vector<char> in_data(16384);
@@ -713,18 +726,10 @@ class schannel_tls_stream {
             out_desc = {SECBUFFER_VERSION, 1, &out_buf};
 
             status = InitializeSecurityContextA(&cred, &ctx, host_str.data(),
-                flags, 0, 0, &in_desc, 0, nullptr, &out_desc, &out_flags, nullptr);
+                context_flags, 0, 0, &in_desc, 0, nullptr, &out_desc, &out_flags, nullptr);
 
-            if (out_buf.cbBuffer > 0 && out_buf.pvBuffer) {
-                auto data = std::span<std::byte const>{
-                    static_cast<std::byte*>(out_buf.pvBuffer), out_buf.cbBuffer};
-                while (!data.empty()) {
-                    auto sn = raw.send(data);
-                    if (!sn) { FreeContextBuffer(out_buf.pvBuffer); return std::unexpected(sn.error()); }
-                    data = data.subspan(*sn);
-                }
-                FreeContextBuffer(out_buf.pvBuffer);
-            }
+            auto send_more = send_token(raw, out_buf);
+            if (!send_more) return std::unexpected(send_more.error());
 
             // Handle extra data
             if (in_bufs[1].BufferType == SECBUFFER_EXTRA && in_bufs[1].cbBuffer > 0) {
@@ -745,6 +750,90 @@ class schannel_tls_stream {
         return {};
     }
 
+    auto renegotiate(std::size_t extra) -> std::expected<void, cppx::http::net_error>
+    {
+        auto in_data = std::vector<char>(std::max<std::size_t>(16384, extra));
+        auto in_len = extra;
+        if (extra > 0) {
+            std::memcpy(
+                in_data.data(),
+                enc_buf_.data() + enc_len_ - extra,
+                extra);
+        }
+
+        for (;;) {
+            SecBuffer in_bufs[2];
+            in_bufs[0] = {
+                static_cast<unsigned long>(in_len),
+                SECBUFFER_TOKEN,
+                in_len > 0 ? in_data.data() : nullptr
+            };
+            in_bufs[1] = {0, SECBUFFER_EMPTY, nullptr};
+            SecBufferDesc in_desc{SECBUFFER_VERSION, 2, in_bufs};
+
+            SecBuffer out_buf{0, SECBUFFER_TOKEN, nullptr};
+            SecBufferDesc out_desc{SECBUFFER_VERSION, 1, &out_buf};
+            DWORD out_flags = 0;
+
+            auto status = InitializeSecurityContextA(
+                &cred_, &ctx_, host_.data(), context_flags,
+                0, 0, &in_desc, 0, &ctx_, &out_desc, &out_flags, nullptr);
+
+            auto sent = send_token(raw_, out_buf);
+            if (!sent)
+                return std::unexpected(sent.error());
+
+            auto preserve_extra = [&](std::size_t remain) {
+                if (remain > enc_buf_.size())
+                    enc_buf_.resize(remain);
+                std::memmove(
+                    enc_buf_.data(),
+                    in_data.data() + in_len - remain,
+                    remain);
+                enc_len_ = remain;
+            };
+
+            if (status == SEC_E_OK) {
+                if (in_bufs[1].BufferType == SECBUFFER_EXTRA &&
+                    in_bufs[1].cbBuffer > 0) {
+                    preserve_extra(in_bufs[1].cbBuffer);
+                } else {
+                    enc_len_ = 0;
+                }
+                QueryContextAttributes(&ctx_, SECPKG_ATTR_STREAM_SIZES, &sizes_);
+                return {};
+            }
+
+            if (status != SEC_I_CONTINUE_NEEDED &&
+                status != SEC_E_INCOMPLETE_MESSAGE) {
+                return std::unexpected(cppx::http::net_error::tls_handshake_failed);
+            }
+
+            if (in_bufs[1].BufferType == SECBUFFER_EXTRA &&
+                in_bufs[1].cbBuffer > 0) {
+                auto remain = static_cast<std::size_t>(in_bufs[1].cbBuffer);
+                std::memmove(
+                    in_data.data(),
+                    in_data.data() + in_len - remain,
+                    remain);
+                in_len = remain;
+            } else {
+                in_len = 0;
+            }
+
+            if (in_len == in_data.size())
+                in_data.resize(in_data.size() * 2);
+
+            auto recv_span = std::span<std::byte>{
+                reinterpret_cast<std::byte*>(in_data.data() + in_len),
+                in_data.size() - in_len};
+            auto n = raw_.recv(recv_span);
+            if (!n)
+                return std::unexpected(cppx::http::net_error::tls_handshake_failed);
+            in_len += *n;
+        }
+    }
+
 public:
     schannel_tls_stream() = default;
     schannel_tls_stream(schannel_tls_stream const&) = delete;
@@ -752,6 +841,7 @@ public:
     schannel_tls_stream(schannel_tls_stream&& o) noexcept
         : raw_{std::move(o.raw_)}, cred_{o.cred_}, ctx_{o.ctx_},
           sizes_{o.sizes_}, valid_{std::exchange(o.valid_, false)},
+          host_{std::move(o.host_)},
           recv_buf_{std::move(o.recv_buf_)}, recv_offset_{o.recv_offset_},
           recv_len_{o.recv_len_}, enc_buf_{std::move(o.enc_buf_)},
           enc_len_{o.enc_len_} {}
@@ -759,6 +849,7 @@ public:
         if (this != &o) {
             close(); raw_ = std::move(o.raw_); cred_ = o.cred_; ctx_ = o.ctx_;
             sizes_ = o.sizes_; valid_ = std::exchange(o.valid_, false);
+            host_ = std::move(o.host_);
             recv_buf_ = std::move(o.recv_buf_); recv_offset_ = o.recv_offset_;
             recv_len_ = o.recv_len_; enc_buf_ = std::move(o.enc_buf_);
             enc_len_ = o.enc_len_;
@@ -776,7 +867,8 @@ public:
         if (!hr) return std::unexpected(hr.error());
         SecPkgContext_StreamSizes sizes{};
         QueryContextAttributes(&ctx, SECPKG_ATTR_STREAM_SIZES, &sizes);
-        return schannel_tls_stream{std::move(*raw), cred, ctx, sizes};
+        return schannel_tls_stream{
+            std::move(*raw), cred, ctx, sizes, std::string{host}};
     }
 
     auto send(std::span<std::byte const> data) const
@@ -852,6 +944,16 @@ public:
                 auto n = raw_.recv(recv_span);
                 if (!n) return std::unexpected(n.error());
                 self->enc_len_ += *n;
+                continue;
+            }
+            if (status == SEC_I_RENEGOTIATE) {
+                std::size_t extra = 0;
+                for (auto const& sb : bufs)
+                    if (sb.BufferType == SECBUFFER_EXTRA)
+                        extra = sb.cbBuffer;
+                auto rr = self->renegotiate(extra);
+                if (!rr)
+                    return std::unexpected(rr.error());
                 continue;
             }
             if (status == SEC_I_CONTEXT_EXPIRED)

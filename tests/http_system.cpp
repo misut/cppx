@@ -114,7 +114,14 @@ void test_https_download() {
     auto r = cppx::http::system::download(
         "https://www.google.com/robots.txt", tmp);
 #endif
-    tc.check(r.has_value(), "HTTPS download succeeds");
+    if (!r) {
+        auto detail = std::format(
+            "HTTPS download succeeds ({})",
+            cppx::http::to_string(r.error()));
+        tc.check(false, detail);
+        return;
+    }
+    tc.check(true, "HTTPS download succeeds");
     if (r) {
         tc.check(std::filesystem::exists(tmp), "downloaded file exists");
         tc.check(std::filesystem::file_size(tmp) > 0,
