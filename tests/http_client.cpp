@@ -472,6 +472,26 @@ void test_download_to_chunked() {
     std::filesystem::remove(path);
 }
 
+void test_download_to_explicit_max_body() {
+    fake_stream::last_sent.clear();
+    fake_stream::next_response = make_response_bytes(
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 5\r\n"
+        "\r\n"
+        "hello");
+
+    auto c = cppx::http::client<fake_stream, fake_tls>{};
+    auto path = std::filesystem::temp_directory_path() / "cppx_test_download_max_body.bin";
+    auto resp = c.download_to("http://example.com/file", path, std::size_t{4});
+
+    tc.check(!resp.has_value(), "download_to honors explicit max_body");
+    tc.check(resp.error() == cppx::http::http_error::body_too_large,
+             "explicit max_body returns body_too_large");
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(path.string() + ".part");
+}
+
 void test_download_to_redirect() {
     redirect_stream::conn_index = 0;
     redirect_stream::responses = {
@@ -560,6 +580,7 @@ int main() {
     test_download_to();
     test_download_to_with_headers();
     test_download_to_chunked();
+    test_download_to_explicit_max_body();
     test_download_to_redirect();
     test_download_to_redirect_large_location();
     return tc.summary("cppx.http.client");
