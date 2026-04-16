@@ -93,6 +93,13 @@ auto bytes_to_string(std::vector<std::byte> const& bytes) -> std::string {
         reinterpret_cast<char const*>(bytes.data()), bytes.size()};
 }
 
+auto make_long_location(std::size_t filler = 12 * 1024) -> std::string {
+    return std::format(
+        "https://release-assets.githubusercontent.com/final?"
+        "sig={}&response-content-disposition=attachment",
+        std::string(filler, 'a'));
+}
+
 // ---- tests ---------------------------------------------------------------
 
 void test_get_200() {
@@ -323,6 +330,32 @@ void test_redirect_301_chain() {
     tc.check(resp->body_string() == "final", "final body");
 }
 
+void test_redirect_large_location() {
+    auto location = make_long_location();
+
+    redirect_stream::conn_index = 0;
+    redirect_stream::responses = {
+        make_response_bytes(std::format(
+            "HTTP/1.1 302 Found\r\n"
+            "Location: {}\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n",
+            location)),
+        make_response_bytes(
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Length: 4\r\n"
+            "\r\n"
+            "done"),
+    };
+
+    auto c = cppx::http::client<redirect_stream, redirect_tls>{};
+    auto resp = c.get("http://example.com/start");
+
+    tc.check(resp.has_value(), "large redirect header followed");
+    tc.check(resp->stat.code == 200, "large redirect final status 200");
+    tc.check(resp->body_string() == "done", "large redirect final body");
+}
+
 void test_redirect_limit() {
     redirect_stream::conn_index = 0;
     redirect_stream::responses.clear();
@@ -471,6 +504,42 @@ void test_download_to_redirect() {
     std::filesystem::remove(path);
 }
 
+void test_download_to_redirect_large_location() {
+    auto location = make_long_location();
+
+    redirect_stream::conn_index = 0;
+    redirect_stream::responses = {
+        make_response_bytes(std::format(
+            "HTTP/1.1 302 Found\r\n"
+            "Location: {}\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n",
+            location)),
+        make_response_bytes(
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Length: 5\r\n"
+            "\r\n"
+            "final"),
+    };
+
+    auto c = cppx::http::client<redirect_stream, redirect_tls>{};
+    auto path = std::filesystem::temp_directory_path() /
+                "cppx_test_download_redirect_large.bin";
+    auto resp = c.download_to("http://example.com/start", path);
+
+    tc.check(resp.has_value(), "large redirect download succeeds");
+    tc.check(resp->stat.code == 200, "large redirect download status 200");
+
+#if !defined(_WIN32)
+    auto in = std::ifstream{path, std::ios::binary};
+    auto content = std::string{std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>()};
+    tc.check(content == "final", "large redirect download file contents");
+#endif
+
+    std::filesystem::remove(path);
+}
+
 // ---- main ----------------------------------------------------------------
 
 int main() {
@@ -485,11 +554,13 @@ int main() {
     test_head_no_body();
     test_redirect_302();
     test_redirect_301_chain();
+    test_redirect_large_location();
     test_redirect_limit();
     test_redirect_no_location();
     test_download_to();
     test_download_to_with_headers();
     test_download_to_chunked();
     test_download_to_redirect();
+    test_download_to_redirect_large_location();
     return tc.summary("cppx.http.client");
 }

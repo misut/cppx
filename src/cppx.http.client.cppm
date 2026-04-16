@@ -149,7 +149,8 @@ auto do_download_exchange(S& stream, request const& req,
 
     for (;;) {
         if (!head) {
-            auto parsed = try_parse_response_head(buf, 8192, max_body);
+            auto parsed = try_parse_response_head(
+                buf, default_response_header_limit, max_body);
             if (!parsed) return std::unexpected(parsed.error());
             if (*parsed) {
                 head = std::move(*parsed);
@@ -384,7 +385,7 @@ auto do_exchange(S& stream, request const& req,
     if (!sr) return std::unexpected(sr.error());
 
     // Receive and parse
-    response_parser parser(8192, max_body);
+    response_parser parser(default_response_header_limit, max_body);
     auto buf = std::array<std::byte, 8192>{};
     for (;;) {
         auto n = stream.recv(buf);

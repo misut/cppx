@@ -344,6 +344,9 @@ inline auto as_bytes(std::string_view s) -> std::vector<std::byte> {
 
 enum class parse_state { need_more, headers_done, complete };
 
+inline constexpr std::size_t default_request_header_limit = 8 * 1024;
+inline constexpr std::size_t default_response_header_limit = 64 * 1024;
+
 namespace detail {
 
 // Find \r\n\r\n boundary in accumulated data.
@@ -388,7 +391,7 @@ class response_parser {
     bool chunked_ = false;
 
 public:
-    explicit response_parser(std::size_t max_header = 8192,
+    explicit response_parser(std::size_t max_header = default_response_header_limit,
                              std::size_t max_body = 64 * 1024 * 1024)
         : max_header_{max_header}, max_body_{max_body} {}
 
@@ -518,7 +521,7 @@ class request_parser {
     std::size_t content_length_ = 0;
 
 public:
-    explicit request_parser(std::size_t max_header = 8192,
+    explicit request_parser(std::size_t max_header = default_request_header_limit,
                             std::size_t max_body = 16 * 1024 * 1024)
         : max_header_{max_header}, max_body_{max_body} {}
 
