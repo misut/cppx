@@ -1038,7 +1038,8 @@ struct schannel_tls {
         if (!hr) return std::unexpected(hr.error());
         SecPkgContext_StreamSizes sizes{};
         QueryContextAttributes(&ctx, SECPKG_ATTR_STREAM_SIZES, &sizes);
-        return schannel_tls_stream{std::move(raw), cred, ctx, sizes};
+        return schannel_tls_stream{
+            std::move(raw), cred, ctx, sizes, std::string{hostname}};
     }
 };
 
