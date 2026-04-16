@@ -6,6 +6,7 @@ on:
 
 jobs:
   test:
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -75,6 +76,7 @@ jobs:
           exon test
 
   windows:
+    timeout-minutes: 15
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
