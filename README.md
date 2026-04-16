@@ -139,7 +139,7 @@ exon test
 
 ```toml
 [dependencies]
-"github.com/misut/cppx" = "1.0.2"
+"github.com/misut/cppx" = "1.0.4"
 ```
 
 ### CMake
@@ -148,7 +148,7 @@ exon test
 include(FetchContent)
 FetchContent_Declare(cppx
     GIT_REPOSITORY https://github.com/misut/cppx.git
-    GIT_TAG v1.0.2
+    GIT_TAG v1.0.4
     GIT_SHALLOW ON
 )
 FetchContent_MakeAvailable(cppx)

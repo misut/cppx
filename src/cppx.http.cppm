@@ -346,6 +346,8 @@ enum class parse_state { need_more, headers_done, complete };
 
 inline constexpr std::size_t default_request_header_limit = 8 * 1024;
 inline constexpr std::size_t default_response_header_limit = 64 * 1024;
+inline constexpr std::size_t default_download_body_limit =
+    std::numeric_limits<std::size_t>::max();
 
 namespace detail {
 
