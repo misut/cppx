@@ -368,11 +368,14 @@ void test_download_to() {
     tc.check(resp->stat.code == 200, "download status 200");
     tc.check(resp->body.empty(), "body cleared after write");
 
-    // verify file contents
+#if !defined(_WIN32)
+    // MSVC modules bug: std::ifstream with std::filesystem::path
+    // under `import std;` triggers a static-init crash before main().
     auto in = std::ifstream{path, std::ios::binary};
     auto content = std::string{std::istreambuf_iterator<char>(in),
                                std::istreambuf_iterator<char>()};
     tc.check(content == "hello world", "file contains response body");
+#endif
 
     std::filesystem::remove(path);
 }
