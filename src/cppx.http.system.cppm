@@ -923,7 +923,7 @@ inline auto get(std::string_view url, cppx::http::headers extra)
 }
 
 // Convenience: download URL body to a file path.
-// Follows redirects and supports large bodies (up to 512 MiB).
+// Follows redirects and streams to disk without a default body cap.
 inline auto download(std::string_view url, std::filesystem::path const& path)
     -> std::expected<void, cppx::http::http_error> {
     auto resp = cppx::http::client<stream, tls>{}.download_to(url, path);

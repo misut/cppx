@@ -136,7 +136,7 @@ inline auto finalize_download(std::ofstream& out,
 template <stream_engine S>
 auto do_download_exchange(S& stream, request const& req,
                           std::filesystem::path const& path,
-                          std::size_t max_body = 512 * 1024 * 1024)
+                          std::size_t max_body = default_download_body_limit)
     -> std::expected<response, http_error>
 {
     auto wire = serialize(req);
@@ -506,12 +506,13 @@ public:
         return request(req);
     }
 
-    // Download a URL to a local file. Follows redirects. Allows large
-    // bodies (up to 512 MiB by default) and streams the response body
-    // to disk once the final response headers have been parsed.
+    // Download a URL to a local file. Follows redirects and streams
+    // the response body to disk once the final response headers have
+    // been parsed. Downloads are uncapped by default; callers can
+    // pass max_body to enforce their own limit.
     auto download_to(std::string_view url_str,
                      std::filesystem::path const& path,
-                     std::size_t max_body = 512 * 1024 * 1024)
+                     std::size_t max_body = default_download_body_limit)
         -> std::expected<response, http_error>
     {
         return download_to(url_str, path, {}, max_body);
@@ -520,7 +521,7 @@ public:
     auto download_to(std::string_view url_str,
                      std::filesystem::path const& path,
                      headers extra,
-                     std::size_t max_body = 512 * 1024 * 1024)
+                     std::size_t max_body = default_download_body_limit)
         -> std::expected<response, http_error>
     {
         auto u = url::parse(url_str);
@@ -577,7 +578,7 @@ private:
 
     auto single_download_request(http::request const& req,
                                  std::filesystem::path const& path,
-                                 std::size_t max_body = 512 * 1024 * 1024)
+                                 std::size_t max_body = default_download_body_limit)
         -> std::expected<response, http_error>
     {
         auto const& target = req.target;
