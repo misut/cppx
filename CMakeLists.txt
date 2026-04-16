@@ -13,8 +13,11 @@ if(MSVC)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
 
-if(WIN32)
 function(exon_copy_windows_asan_runtime target)
+    if(NOT WIN32)
+        return()
+    endif()
+
     get_target_property(_exon_target_type ${target} TYPE)
     if(NOT _exon_target_type STREQUAL "EXECUTABLE")
         return()
@@ -45,7 +48,6 @@ function(exon_copy_windows_asan_runtime target)
             "${_exon_asan_runtime}"
             "$<TARGET_FILE_DIR:${target}>/clang_rt.asan_dynamic-x86_64.dll")
 endfunction()
-endif()
 
 if(TARGET cppx)
     return()
