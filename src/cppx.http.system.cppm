@@ -639,6 +639,7 @@ class schannel_tls_stream {
     SecPkgContext_StreamSizes sizes_{};
     bool valid_ = false;
     std::string host_;
+    bool peer_closed_ = false;
     std::vector<char> recv_buf_;
     std::size_t recv_offset_ = 0;
     std::size_t recv_len_ = 0;
@@ -841,7 +842,7 @@ public:
     schannel_tls_stream(schannel_tls_stream&& o) noexcept
         : raw_{std::move(o.raw_)}, cred_{o.cred_}, ctx_{o.ctx_},
           sizes_{o.sizes_}, valid_{std::exchange(o.valid_, false)},
-          host_{std::move(o.host_)},
+          host_{std::move(o.host_)}, peer_closed_{o.peer_closed_},
           recv_buf_{std::move(o.recv_buf_)}, recv_offset_{o.recv_offset_},
           recv_len_{o.recv_len_}, enc_buf_{std::move(o.enc_buf_)},
           enc_len_{o.enc_len_} {}
@@ -849,7 +850,7 @@ public:
         if (this != &o) {
             close(); raw_ = std::move(o.raw_); cred_ = o.cred_; ctx_ = o.ctx_;
             sizes_ = o.sizes_; valid_ = std::exchange(o.valid_, false);
-            host_ = std::move(o.host_);
+            host_ = std::move(o.host_); peer_closed_ = o.peer_closed_;
             recv_buf_ = std::move(o.recv_buf_); recv_offset_ = o.recv_offset_;
             recv_len_ = o.recv_len_; enc_buf_ = std::move(o.enc_buf_);
             enc_len_ = o.enc_len_;
@@ -907,6 +908,8 @@ public:
             self->recv_offset_ += n;
             return n;
         }
+        if (self->peer_closed_ && self->enc_len_ == 0)
+            return std::unexpected(cppx::http::net_error::connection_closed);
         for (;;) {
             if (self->enc_len_ == self->enc_buf_.size()) {
                 auto next = std::max<std::size_t>(
@@ -956,10 +959,10 @@ public:
                     return std::unexpected(rr.error());
                 continue;
             }
-            if (status == SEC_I_CONTEXT_EXPIRED)
-                return std::unexpected(cppx::http::net_error::connection_closed);
-            if (status != SEC_E_OK)
+            if (status != SEC_E_OK && status != SEC_I_CONTEXT_EXPIRED)
                 return std::unexpected(cppx::http::net_error::tls_read_failed);
+            if (status == SEC_I_CONTEXT_EXPIRED)
+                self->peer_closed_ = true;
 
             std::byte* data_ptr = nullptr;
             std::size_t data_len = 0;
@@ -1005,6 +1008,9 @@ public:
 
             if (out_n > 0)
                 return out_n;
+
+            if (self->peer_closed_ && extra == 0)
+                return std::unexpected(cppx::http::net_error::connection_closed);
 
             if (extra == 0) {
                 auto recv_span = std::span<std::byte>{
