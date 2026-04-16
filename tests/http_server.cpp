@@ -12,66 +12,40 @@ import std;
 cppx::test::context tc;
 
 void test_route_handler() {
-    // Start server with a custom route
-    cppx::http::server<cppx::http::system::listener,
-                       cppx::http::system::stream> srv;
-
-    srv.route(cppx::http::method::GET, "/api/health",
-              [](cppx::http::request const&) -> cppx::http::response {
-        return {
-            .stat = {200},
-            .hdrs = {},
-            .body = cppx::http::as_bytes(R"({"status":"ok"})"),
-        };
-    });
-
-    // Bind to ephemeral port to discover the actual port
+    // Bind listener once on the main thread — no close-and-rebind race.
     auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
     tc.check(listener.has_value(), "server bind");
     if (!listener) return;
     auto port = listener->local_port();
-    listener->close(); // close so the server can re-bind
 
-    // Run server in background thread
+    // Move listener into server thread; use a promise as ready signal.
     auto server_done = std::atomic<bool>{false};
-    auto server_thread = std::thread{[&] {
-        cppx::http::server<cppx::http::system::listener,
-                           cppx::http::system::stream> s;
-        s.route(cppx::http::method::GET, "/api/health",
-                [](cppx::http::request const&) -> cppx::http::response {
-            return {
-                .stat = {200},
-                .hdrs = {},
-                .body = cppx::http::as_bytes(R"({"status":"ok"})"),
-            };
-        });
-        // Run for one request then stop
-        auto l = cppx::http::system::listener::bind("127.0.0.1", port);
-        if (!l) return;
-        auto conn = l->accept();
+    auto ready = std::promise<void>{};
+    auto ready_fut = ready.get_future();
+
+    auto server_thread = std::thread{[&, l = std::move(*listener)]() mutable {
+        ready.set_value();
+        auto conn = l.accept();
         if (!conn) return;
         cppx::http::detail::handle_connection(
-            std::move(*conn), {
-                {cppx::http::method::GET, "/api/health",
-                 [](cppx::http::request const&) -> cppx::http::response {
-                    return {
-                        .stat = {200},
-                        .hdrs = {},
-                        .body = cppx::http::as_bytes(R"({"status":"ok"})"),
-                    };
-                }}
-            },
+            std::move(*conn),
+            {{cppx::http::method::GET, "/api/health",
+              [](cppx::http::request const&) -> cppx::http::response {
+                 return {
+                     .stat = {200},
+                     .hdrs = {},
+                     .body = cppx::http::as_bytes(R"({"status":"ok"})"),
+                 };
+              }}},
             [](cppx::http::request const&) -> cppx::http::response {
                 return {.stat = {404}, .hdrs = {}, .body = {}};
             });
-        l->close();
+        l.close();
         server_done.store(true);
     }};
 
-    // Give server a moment to start listening
-    std::this_thread::sleep_for(std::chrono::milliseconds{50});
+    ready_fut.wait();
 
-    // Client request
     using client_t = cppx::http::client<cppx::http::system::stream,
                                         cppx::http::system::tls>;
     auto url = std::format("http://127.0.0.1:{}/api/health", port);
@@ -102,19 +76,17 @@ void test_static_file_serving() {
         f << "<h1>home</h1>";
     }
 
-    // Bind ephemeral port
+    // Bind listener once on the main thread — no close-and-rebind race.
     auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
     tc.check(listener.has_value(), "static server bind");
     if (!listener) { std::filesystem::remove_all(tmp); return; }
     auto port = listener->local_port();
-    listener->close();
 
-    // Server thread — handle 2 requests then stop
-    auto server_thread = std::thread{[&] {
-        auto l = cppx::http::system::listener::bind("127.0.0.1", port);
-        if (!l) return;
+    // Move listener into server thread; use a promise as ready signal.
+    auto ready = std::promise<void>{};
+    auto ready_fut = ready.get_future();
 
-        // Create the static file handler
+    auto server_thread = std::thread{[&, l = std::move(*listener)]() mutable {
         cppx::http::handler_fn fallback = [&tmp](
             cppx::http::request const& req) -> cppx::http::response {
             auto path = req.target.path;
@@ -139,16 +111,17 @@ void test_static_file_serving() {
             return resp;
         };
 
+        ready.set_value();
         for (int i = 0; i < 2; ++i) {
-            auto conn = l->accept();
+            auto conn = l.accept();
             if (!conn) break;
             cppx::http::detail::handle_connection(
                 std::move(*conn), {}, fallback);
         }
-        l->close();
+        l.close();
     }};
 
-    std::this_thread::sleep_for(std::chrono::milliseconds{50});
+    ready_fut.wait();
 
     using client_t = cppx::http::client<cppx::http::system::stream,
                                         cppx::http::system::tls>;
