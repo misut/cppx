@@ -371,6 +371,7 @@ void test_download_to() {
 #if !defined(_WIN32)
     // MSVC modules bug: std::ifstream with std::filesystem::path
     // under `import std;` triggers a static-init crash before main().
+    // Track: https://github.com/misut/cppx/issues/26
     auto in = std::ifstream{path, std::ios::binary};
     auto content = std::string{std::istreambuf_iterator<char>(in),
                                std::istreambuf_iterator<char>()};
