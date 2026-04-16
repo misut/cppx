@@ -52,21 +52,13 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.test.cppm
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.0.2\""
+    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.0.3\""
 )
 
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(cppx-modules PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(cppx-modules PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()
 
@@ -81,15 +73,7 @@ target_link_libraries(test-async PRIVATE
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(test-async PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(test-async PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()
 
@@ -104,15 +88,7 @@ target_link_libraries(test-async_system PRIVATE
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(test-async_system PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(test-async_system PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()
 
@@ -127,15 +103,7 @@ target_link_libraries(test-async_test PRIVATE
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(test-async_test PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(test-async_test PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()
 
@@ -150,15 +118,7 @@ target_link_libraries(test-env PRIVATE
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(test-env PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(test-env PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()
 
@@ -173,15 +133,7 @@ target_link_libraries(test-env_system PRIVATE
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(test-env_system PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(test-env_system PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()
 
@@ -196,15 +148,7 @@ target_link_libraries(test-http PRIVATE
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(test-http PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(test-http PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()
 
@@ -219,15 +163,7 @@ target_link_libraries(test-http_client PRIVATE
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(test-http_client PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(test-http_client PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()
 
@@ -242,15 +178,7 @@ target_link_libraries(test-http_server PRIVATE
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(test-http_server PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(test-http_server PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()
 
@@ -265,15 +193,7 @@ target_link_libraries(test-http_system PRIVATE
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(test-http_system PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(test-http_system PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()
 
@@ -288,15 +208,7 @@ target_link_libraries(test-platform PRIVATE
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(test-platform PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(test-platform PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()
 
@@ -311,14 +223,6 @@ target_link_libraries(test-reflect PRIVATE
 if(PROJECT_IS_TOP_LEVEL)
 
     target_compile_options(test-reflect PRIVATE
-        -fsanitize=address,undefined
-        -fno-omit-frame-pointer
-    )
-
-    target_link_options(test-reflect PRIVATE
-        -fsanitize=address,undefined
-        -framework
-        Security
-        -Wl,-framework,CoreFoundation
+        /fsanitize=address
     )
 endif()

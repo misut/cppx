@@ -15,6 +15,7 @@ cppx::test::context tc;
 struct fake_stream {
     // Set this before calling client methods to control what recv returns.
     inline static std::vector<std::byte> next_response{};
+    inline static std::vector<std::byte> last_sent{};
 
     std::vector<std::byte> response_data;
     mutable std::size_t recv_pos = 0;
@@ -30,6 +31,7 @@ struct fake_stream {
     auto send(std::span<std::byte const> data) const
         -> std::expected<std::size_t, cppx::http::net_error> {
         sent.insert(sent.end(), data.begin(), data.end());
+        last_sent.insert(last_sent.end(), data.begin(), data.end());
         return data.size();
     }
 
@@ -84,6 +86,11 @@ struct fail_tls {
 
 auto make_response_bytes(std::string_view raw) -> std::vector<std::byte> {
     return cppx::http::as_bytes(raw);
+}
+
+auto bytes_to_string(std::vector<std::byte> const& bytes) -> std::string {
+    return std::string{
+        reinterpret_cast<char const*>(bytes.data()), bytes.size()};
 }
 
 // ---- tests ---------------------------------------------------------------
@@ -354,6 +361,7 @@ void test_redirect_no_location() {
 }
 
 void test_download_to() {
+    fake_stream::last_sent.clear();
     fake_stream::next_response = make_response_bytes(
         "HTTP/1.1 200 OK\r\n"
         "Content-Length: 11\r\n"
@@ -381,6 +389,88 @@ void test_download_to() {
     std::filesystem::remove(path);
 }
 
+void test_download_to_with_headers() {
+    fake_stream::last_sent.clear();
+    fake_stream::next_response = make_response_bytes(
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 0\r\n"
+        "\r\n");
+
+    auto c = cppx::http::client<fake_stream, fake_tls>{};
+    auto path = std::filesystem::temp_directory_path() / "cppx_test_download_headers.bin";
+    cppx::http::headers extra;
+    extra.set("user-agent", "cppx-test");
+    extra.set("accept", "application/octet-stream");
+
+    auto resp = c.download_to("http://example.com/file", path, std::move(extra));
+    tc.check(resp.has_value(), "download_to with headers succeeds");
+
+    auto sent = bytes_to_string(fake_stream::last_sent);
+    tc.check(sent.contains("user-agent: cppx-test\r\n"), "request contains user-agent");
+    tc.check(sent.contains("accept: application/octet-stream\r\n"), "request contains accept");
+
+    std::filesystem::remove(path);
+}
+
+void test_download_to_chunked() {
+    fake_stream::last_sent.clear();
+    fake_stream::next_response = make_response_bytes(
+        "HTTP/1.1 200 OK\r\n"
+        "Transfer-Encoding: chunked\r\n"
+        "\r\n"
+        "5\r\nhello\r\n"
+        "6\r\n world\r\n"
+        "0\r\n\r\n");
+
+    auto c = cppx::http::client<fake_stream, fake_tls>{};
+    auto path = std::filesystem::temp_directory_path() / "cppx_test_download_chunked.bin";
+    auto resp = c.download_to("http://example.com/chunked", path);
+
+    tc.check(resp.has_value(), "chunked download succeeds");
+    tc.check(resp->stat.code == 200, "chunked download status 200");
+
+#if !defined(_WIN32)
+    auto in = std::ifstream{path, std::ios::binary};
+    auto content = std::string{std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>()};
+    tc.check(content == "hello world", "chunked download file contents");
+#endif
+
+    std::filesystem::remove(path);
+}
+
+void test_download_to_redirect() {
+    redirect_stream::conn_index = 0;
+    redirect_stream::responses = {
+        make_response_bytes(
+            "HTTP/1.1 302 Found\r\n"
+            "Location: http://example.com/final\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n"),
+        make_response_bytes(
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Length: 5\r\n"
+            "\r\n"
+            "final"),
+    };
+
+    auto c = cppx::http::client<redirect_stream, redirect_tls>{};
+    auto path = std::filesystem::temp_directory_path() / "cppx_test_download_redirect.bin";
+    auto resp = c.download_to("http://example.com/start", path);
+
+    tc.check(resp.has_value(), "redirect download succeeds");
+    tc.check(resp->stat.code == 200, "redirect download status 200");
+
+#if !defined(_WIN32)
+    auto in = std::ifstream{path, std::ios::binary};
+    auto content = std::string{std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>()};
+    tc.check(content == "final", "redirect download file contents");
+#endif
+
+    std::filesystem::remove(path);
+}
+
 // ---- main ----------------------------------------------------------------
 
 int main() {
@@ -398,5 +488,8 @@ int main() {
     test_redirect_limit();
     test_redirect_no_location();
     test_download_to();
+    test_download_to_with_headers();
+    test_download_to_chunked();
+    test_download_to_redirect();
     return tc.summary("cppx.http.client");
 }
