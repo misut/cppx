@@ -917,11 +917,27 @@ inline auto get(std::string_view url)
     return cppx::http::client<stream, tls>{}.get(url);
 }
 
+inline auto get(std::string_view url, cppx::http::headers extra)
+    -> std::expected<cppx::http::response, cppx::http::http_error> {
+    return cppx::http::client<stream, tls>{}.get(url, std::move(extra));
+}
+
 // Convenience: download URL body to a file path.
 // Follows redirects and supports large bodies (up to 512 MiB).
 inline auto download(std::string_view url, std::filesystem::path const& path)
     -> std::expected<void, cppx::http::http_error> {
     auto resp = cppx::http::client<stream, tls>{}.download_to(url, path);
+    if (!resp) return std::unexpected(resp.error());
+    if (!resp->stat.ok())
+        return std::unexpected(cppx::http::http_error::response_parse_failed);
+    return {};
+}
+
+inline auto download(std::string_view url, std::filesystem::path const& path,
+                     cppx::http::headers extra)
+    -> std::expected<void, cppx::http::http_error> {
+    auto resp = cppx::http::client<stream, tls>{}.download_to(
+        url, path, std::move(extra));
     if (!resp) return std::unexpected(resp.error());
     if (!resp->stat.ok())
         return std::unexpected(cppx::http::http_error::response_parse_failed);
