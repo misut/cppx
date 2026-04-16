@@ -911,23 +911,20 @@ auto recv_all(S& s, std::vector<std::byte>& out, std::size_t max_size = 64 * 102
 }
 
 // Convenience: HTTPS-capable GET using system stream + TLS.
+// Follows redirects automatically.
 inline auto get(std::string_view url)
     -> std::expected<cppx::http::response, cppx::http::http_error> {
     return cppx::http::client<stream, tls>{}.get(url);
 }
 
 // Convenience: download URL body to a file path.
+// Follows redirects and supports large bodies (up to 512 MiB).
 inline auto download(std::string_view url, std::filesystem::path const& path)
     -> std::expected<void, cppx::http::http_error> {
-    auto resp = get(url);
+    auto resp = cppx::http::client<stream, tls>{}.download_to(url, path);
     if (!resp) return std::unexpected(resp.error());
     if (!resp->stat.ok())
         return std::unexpected(cppx::http::http_error::response_parse_failed);
-    auto out = std::ofstream{path, std::ios::binary};
-    if (!out)
-        return std::unexpected(cppx::http::http_error::send_failed);
-    out.write(reinterpret_cast<char const*>(resp->body.data()),
-              static_cast<std::streamsize>(resp->body.size()));
     return {};
 }
 

@@ -27,7 +27,8 @@ auto client_send_all(S& s, std::span<std::byte const> data)
 // Perform the HTTP exchange on an already-connected stream:
 // serialize request → send → recv loop → parse response.
 template <stream_engine S>
-auto do_exchange(S& stream, request const& req)
+auto do_exchange(S& stream, request const& req,
+                 std::size_t max_body = 64 * 1024 * 1024)
     -> std::expected<response, http_error>
 {
     // Serialize and send
@@ -36,7 +37,7 @@ auto do_exchange(S& stream, request const& req)
     if (!sr) return std::unexpected(sr.error());
 
     // Receive and parse
-    response_parser parser;
+    response_parser parser(8192, max_body);
     auto buf = std::array<std::byte, 8192>{};
     for (;;) {
         auto n = stream.recv(buf);
@@ -86,26 +87,32 @@ public:
     explicit client(Tls tls) : tls_{std::move(tls)} {}
 
     // Send a fully-constructed request and receive the response.
-    auto request(http::request const& req)
+    // Automatically follows 3xx redirects up to max_redirects times.
+    auto request(http::request const& req, int max_redirects = 5,
+                 std::size_t max_body = 64 * 1024 * 1024)
         -> std::expected<response, http_error>
     {
-        auto const& target = req.target;
-        auto port = target.effective_port();
+        auto current = req;
+        for (int hops = 0;; ++hops) {
+            auto resp = single_request(current, max_body);
+            if (!resp) return resp;
 
-        // Connect
-        auto raw = RawStream::connect(target.host, port);
-        if (!raw)
-            return std::unexpected(http_error::connection_failed);
+            auto code = resp->stat.code;
+            if (code < 300 || code >= 400) return resp;
+            if (hops >= max_redirects)
+                return std::unexpected(http_error::redirect_limit);
 
-        // TLS handshake if needed
-        if (target.is_tls()) {
-            auto tls_stream = tls_.wrap(std::move(*raw), target.host);
-            if (!tls_stream)
-                return std::unexpected(http_error::tls_failed);
-            return detail::do_exchange(*tls_stream, req);
+            auto location = resp->hdrs.get("location");
+            if (!location) return resp;
+
+            auto next = url::parse(*location);
+            if (!next) return std::unexpected(http_error::url_parse_failed);
+
+            // 303 See Other: switch to GET regardless of original method
+            if (code == 303) current.verb = method::GET;
+            current.target = std::move(*next);
+            current.hdrs.set("host", current.target.host);
         }
-
-        return detail::do_exchange(*raw, req);
     }
 
     // Convenience: GET a URL string, returns the full response.
@@ -149,6 +156,54 @@ public:
         req.hdrs.set("content-type", content_type);
         req.body = std::move(body);
         return request(req);
+    }
+
+    // Download a URL to a local file. Follows redirects. Allows large
+    // bodies (up to 512 MiB by default) and writes to disk after the
+    // full response is received.
+    auto download_to(std::string_view url_str,
+                     std::filesystem::path const& path,
+                     std::size_t max_body = 512 * 1024 * 1024)
+        -> std::expected<response, http_error>
+    {
+        auto u = url::parse(url_str);
+        if (!u) return std::unexpected(http_error::url_parse_failed);
+
+        http::request req;
+        req.verb = method::GET;
+        req.target = std::move(*u);
+        auto resp = request(req, 5, max_body);
+        if (!resp) return resp;
+        if (!resp->stat.ok()) return resp;
+
+        auto out = std::ofstream{path, std::ios::binary};
+        if (!out) return std::unexpected(http_error::send_failed);
+        out.write(reinterpret_cast<char const*>(resp->body.data()),
+                  static_cast<std::streamsize>(resp->body.size()));
+        resp->body.clear();
+        return resp;
+    }
+
+private:
+    auto single_request(http::request const& req,
+                        std::size_t max_body = 64 * 1024 * 1024)
+        -> std::expected<response, http_error>
+    {
+        auto const& target = req.target;
+        auto port = target.effective_port();
+
+        auto raw = RawStream::connect(target.host, port);
+        if (!raw)
+            return std::unexpected(http_error::connection_failed);
+
+        if (target.is_tls()) {
+            auto tls_stream = tls_.wrap(std::move(*raw), target.host);
+            if (!tls_stream)
+                return std::unexpected(http_error::tls_failed);
+            return detail::do_exchange(*tls_stream, req, max_body);
+        }
+
+        return detail::do_exchange(*raw, req, max_body);
     }
 };
 

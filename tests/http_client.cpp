@@ -221,6 +221,162 @@ void test_head_no_body() {
     tc.check(resp->body.empty(), "HEAD has no body");
 }
 
+// ---- redirect tests -----------------------------------------------------
+
+// Multi-hop redirect stream: returns different responses per connection.
+struct redirect_stream {
+    inline static std::vector<std::vector<std::byte>> responses{};
+    inline static std::size_t conn_index = 0;
+
+    std::vector<std::byte> response_data;
+    mutable std::size_t recv_pos = 0;
+
+    static auto connect(std::string_view, std::uint16_t)
+        -> std::expected<redirect_stream, cppx::http::net_error> {
+        redirect_stream s;
+        if (conn_index < responses.size())
+            s.response_data = responses[conn_index++];
+        return s;
+    }
+
+    auto send(std::span<std::byte const>) const
+        -> std::expected<std::size_t, cppx::http::net_error> {
+        return std::size_t{1};  // pretend we sent it
+    }
+
+    auto recv(std::span<std::byte> buf) const
+        -> std::expected<std::size_t, cppx::http::net_error> {
+        if (recv_pos >= response_data.size())
+            return std::unexpected(cppx::http::net_error::connection_closed);
+        auto n = std::min(buf.size(), response_data.size() - recv_pos);
+        std::copy_n(response_data.begin() + recv_pos, n, buf.begin());
+        recv_pos += n;
+        return n;
+    }
+
+    void close() const {}
+};
+
+struct redirect_tls {
+    using stream = redirect_stream;
+    auto wrap(redirect_stream raw, std::string_view) const
+        -> std::expected<redirect_stream, cppx::http::net_error> {
+        return std::move(raw);
+    }
+};
+
+void test_redirect_302() {
+    redirect_stream::conn_index = 0;
+    redirect_stream::responses = {
+        make_response_bytes(
+            "HTTP/1.1 302 Found\r\n"
+            "Location: http://example.com/final\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n"),
+        make_response_bytes(
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Length: 4\r\n"
+            "\r\n"
+            "done"),
+    };
+
+    auto c = cppx::http::client<redirect_stream, redirect_tls>{};
+    auto resp = c.get("http://example.com/start");
+
+    tc.check(resp.has_value(), "302 redirect followed");
+    tc.check(resp->stat.code == 200, "final status 200");
+    tc.check(resp->body_string() == "done", "final body");
+}
+
+void test_redirect_301_chain() {
+    redirect_stream::conn_index = 0;
+    redirect_stream::responses = {
+        make_response_bytes(
+            "HTTP/1.1 301 Moved Permanently\r\n"
+            "Location: http://example.com/hop2\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n"),
+        make_response_bytes(
+            "HTTP/1.1 301 Moved Permanently\r\n"
+            "Location: http://example.com/hop3\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n"),
+        make_response_bytes(
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Length: 5\r\n"
+            "\r\n"
+            "final"),
+    };
+
+    auto c = cppx::http::client<redirect_stream, redirect_tls>{};
+    auto resp = c.get("http://example.com/hop1");
+
+    tc.check(resp.has_value(), "301 chain followed");
+    tc.check(resp->stat.code == 200, "final status 200");
+    tc.check(resp->body_string() == "final", "final body");
+}
+
+void test_redirect_limit() {
+    redirect_stream::conn_index = 0;
+    redirect_stream::responses.clear();
+    // 6 redirects → exceeds default limit of 5
+    for (int i = 0; i < 6; ++i) {
+        redirect_stream::responses.push_back(make_response_bytes(
+            "HTTP/1.1 302 Found\r\n"
+            "Location: http://example.com/next\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n"));
+    }
+
+    auto c = cppx::http::client<redirect_stream, redirect_tls>{};
+    auto resp = c.get("http://example.com/loop");
+
+    tc.check(!resp.has_value(), "redirect limit exceeded → error");
+    tc.check(resp.error() == cppx::http::http_error::redirect_limit,
+             "error is redirect_limit");
+}
+
+void test_redirect_no_location() {
+    redirect_stream::conn_index = 0;
+    redirect_stream::responses = {
+        make_response_bytes(
+            "HTTP/1.1 302 Found\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n"),
+    };
+
+    auto c = cppx::http::client<redirect_stream, redirect_tls>{};
+    auto resp = c.get("http://example.com/");
+
+    // 302 without Location header: return the redirect response as-is
+    tc.check(resp.has_value(), "302 without Location returns response");
+    tc.check(resp->stat.code == 302, "status 302 returned");
+}
+
+void test_download_to() {
+    fake_stream::next_response = make_response_bytes(
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 11\r\n"
+        "\r\n"
+        "hello world");
+
+    auto c = cppx::http::client<fake_stream, fake_tls>{};
+    auto path = std::filesystem::temp_directory_path() / "cppx_test_download.bin";
+    auto resp = c.download_to("http://example.com/file", path);
+
+    tc.check(resp.has_value(), "download_to succeeds");
+    tc.check(resp->stat.code == 200, "download status 200");
+    tc.check(resp->body.empty(), "body cleared after write");
+
+    // verify file contents
+    auto in = std::ifstream{path, std::ios::binary};
+    auto content = std::string{std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>()};
+    tc.check(content == "hello world", "file contains response body");
+
+    std::filesystem::remove(path);
+}
+
 // ---- main ----------------------------------------------------------------
 
 int main() {
@@ -233,5 +389,10 @@ int main() {
     test_invalid_url();
     test_chunked_response();
     test_head_no_body();
+    test_redirect_302();
+    test_redirect_301_chain();
+    test_redirect_limit();
+    test_redirect_no_location();
+    test_download_to();
     return tc.summary("cppx.http.client");
 }
