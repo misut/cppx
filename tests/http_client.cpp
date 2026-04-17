@@ -279,6 +279,54 @@ struct redirect_tls {
     }
 };
 
+// Stream that rejects a tail read larger than the remaining bytes.
+// This models the macOS download stall: a blocking TLS transport can
+// hang if the client keeps asking for a full buffer after Content-Length
+// says fewer bytes remain in the body.
+struct tail_limited_stream {
+    inline static std::vector<std::byte> next_response{};
+
+    std::vector<std::byte> response_data;
+    mutable std::size_t recv_pos = 0;
+
+    static auto connect(std::string_view, std::uint16_t)
+        -> std::expected<tail_limited_stream, cppx::http::net_error> {
+        tail_limited_stream s;
+        s.response_data = next_response;
+        return s;
+    }
+
+    auto send(std::span<std::byte const> data) const
+        -> std::expected<std::size_t, cppx::http::net_error> {
+        return data.size();
+    }
+
+    auto recv(std::span<std::byte> buf) const
+        -> std::expected<std::size_t, cppx::http::net_error> {
+        if (recv_pos >= response_data.size())
+            return std::unexpected(cppx::http::net_error::connection_closed);
+
+        auto remain = response_data.size() - recv_pos;
+        if (recv_pos > 0 && buf.size() > remain)
+            return std::unexpected(cppx::http::net_error::recv_failed);
+
+        auto n = std::min(buf.size(), remain);
+        std::copy_n(response_data.begin() + recv_pos, n, buf.begin());
+        recv_pos += n;
+        return n;
+    }
+
+    void close() const {}
+};
+
+struct tail_limited_tls {
+    using stream = tail_limited_stream;
+    auto wrap(tail_limited_stream raw, std::string_view) const
+        -> std::expected<tail_limited_stream, cppx::http::net_error> {
+        return std::move(raw);
+    }
+};
+
 void test_redirect_302() {
     redirect_stream::conn_index = 0;
     redirect_stream::responses = {
@@ -492,6 +540,35 @@ void test_download_to_explicit_max_body() {
     std::filesystem::remove(path.string() + ".part");
 }
 
+void test_download_to_content_length_tail_read() {
+    auto body = std::string(9000, 'x');
+    tail_limited_stream::next_response = make_response_bytes(std::format(
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: {}\r\n"
+        "\r\n"
+        "{}",
+        body.size(), body));
+
+    auto c = cppx::http::client<tail_limited_stream, tail_limited_tls>{};
+    auto path = std::filesystem::temp_directory_path() /
+                "cppx_test_download_tail_read.bin";
+    auto resp = c.download_to("http://example.com/file", path);
+
+    tc.check(resp.has_value(),
+             "download_to limits final content-length recv to remaining bytes");
+    tc.check(resp && resp->stat.code == 200, "tail-limited download status 200");
+
+#if !defined(_WIN32)
+    auto in = std::ifstream{path, std::ios::binary};
+    auto content = std::string{std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>()};
+    tc.check(content == body, "tail-limited download file contents");
+#endif
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(path.string() + ".part");
+}
+
 void test_download_to_redirect() {
     redirect_stream::conn_index = 0;
     redirect_stream::responses = {
@@ -581,6 +658,7 @@ int main() {
     test_download_to_with_headers();
     test_download_to_chunked();
     test_download_to_explicit_max_body();
+    test_download_to_content_length_tail_read();
     test_download_to_redirect();
     test_download_to_redirect_large_location();
     return tc.summary("cppx.http.client");

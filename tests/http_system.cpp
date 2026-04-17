@@ -10,6 +10,12 @@ import std;
 
 cppx::test::context tc;
 
+auto http_test_user_agent() -> cppx::http::headers {
+    auto hdrs = cppx::http::headers{};
+    hdrs.set("user-agent", "cppx/test-http_system");
+    return hdrs;
+}
+
 void test_tcp_roundtrip() {
     // Bind listener on ephemeral port
     auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
@@ -107,16 +113,26 @@ void test_https_download() {
     // Skip on Windows until SChannel recv is fixed.
     return;
 #endif
-    auto tmp = std::filesystem::temp_directory_path() /
-               "cppx_test_https_dl.txt";
+    auto tmp = std::filesystem::temp_directory_path();
+#if defined(__APPLE__)
+    // GitHub release assets redirect to a keep-alive blob response with an
+    // explicit Content-Length. This path exercises the macOS download stall
+    // regression that simple close-delimited responses miss.
+    auto path = tmp / "cppx_test_https_dl.zip";
     auto r = cppx::http::system::download(
-        "https://www.google.com/robots.txt", tmp);
+        "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-mac.zip",
+        path, http_test_user_agent());
+#else
+    auto path = tmp / "cppx_test_https_dl.txt";
+    auto r = cppx::http::system::download(
+        "https://www.google.com/robots.txt", path, http_test_user_agent());
+#endif
     tc.check(r.has_value(), "HTTPS download succeeds");
     if (r) {
-        tc.check(std::filesystem::exists(tmp), "downloaded file exists");
-        tc.check(std::filesystem::file_size(tmp) > 0,
+        tc.check(std::filesystem::exists(path), "downloaded file exists");
+        tc.check(std::filesystem::file_size(path) > 0,
               "downloaded file non-empty");
-        std::filesystem::remove(tmp);
+        std::filesystem::remove(path);
     }
 }
 
