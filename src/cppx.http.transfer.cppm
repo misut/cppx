@@ -25,6 +25,7 @@ inline constexpr auto to_string(TransferBackend backend) -> std::string_view {
 struct TransferOptions {
     TransferBackend backend = TransferBackend::Auto;
     cppx::http::headers headers;
+    std::chrono::milliseconds shell_timeout = std::chrono::seconds{60};
 };
 
 struct TransferResult {

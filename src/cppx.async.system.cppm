@@ -1,6 +1,6 @@
 // Platform event loop and async I/O. This is the impure edge for
-// cppx.async — it wraps kqueue (macOS), epoll (Linux), or a fallback
-// poll loop behind the executor_engine concept.
+// cppx.async — it wraps kqueue (macOS), epoll (Linux), or a
+// select-based WinSock loop behind the executor_engine concept.
 //
 // On wasm32-wasi the module compiles as an empty stub.
 
@@ -20,7 +20,6 @@ module;
 
 #if defined(__linux__)
 #include <sys/epoll.h>
-#include <sys/timerfd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -31,123 +30,318 @@ module;
 #include <cerrno>
 #endif
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#endif
+
 export module cppx.async.system;
 
-#if !defined(__wasi__) && !defined(_WIN32)
+#if !defined(__wasi__)
 import std;
 import cppx.async;
 import cppx.http;
 
 export namespace cppx::async::system {
 
-// ---- event_loop ----------------------------------------------------------
+class event_loop;
+inline thread_local event_loop* current_loop = nullptr;
 
-// Single-threaded event loop backed by kqueue (macOS) or epoll (Linux).
-// Satisfies executor_engine so it can drive task<T> coroutines.
+namespace detail {
+
+template <class F>
+class scope_guard {
+public:
+    explicit scope_guard(F fn) : fn_{std::move(fn)} {}
+
+    scope_guard(scope_guard const&) = delete;
+    auto operator=(scope_guard const&) -> scope_guard& = delete;
+
+    scope_guard(scope_guard&& other) noexcept
+        : fn_{std::move(other.fn_)},
+          active_{std::exchange(other.active_, false)} {}
+
+    ~scope_guard() {
+        if (active_)
+            fn_();
+    }
+
+private:
+    F fn_;
+    bool active_ = true;
+};
+
+template <class F>
+scope_guard(F) -> scope_guard<F>;
+
+#if defined(_WIN32)
+struct wsa_session {
+    wsa_session() {
+        WSADATA data{};
+        if (::WSAStartup(MAKEWORD(2, 2), &data) != 0)
+            throw std::runtime_error{"WSAStartup failed"};
+    }
+
+    ~wsa_session() {
+        ::WSACleanup();
+    }
+};
+
+inline void ensure_wsa() {
+    static auto session = wsa_session{};
+    (void)session;
+}
+
+using native_socket = SOCKET;
+inline constexpr native_socket invalid_socket = INVALID_SOCKET;
+
+inline void close_socket(native_socket fd) {
+    if (fd != invalid_socket)
+        ::closesocket(fd);
+}
+
+inline auto last_socket_error() -> int {
+    return ::WSAGetLastError();
+}
+
+inline auto would_block(int error) -> bool {
+    return error == WSAEWOULDBLOCK
+        || error == WSAEINPROGRESS
+        || error == WSAEALREADY;
+}
+
+inline void set_nonblocking(native_socket fd) {
+    u_long enabled = 1;
+    ::ioctlsocket(fd, FIONBIO, &enabled);
+}
+
+inline auto create_socket_pair()
+    -> std::expected<std::pair<native_socket, native_socket>, cppx::http::net_error> {
+    ensure_wsa();
+
+    auto listener = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listener == invalid_socket)
+        return std::unexpected(cppx::http::net_error::bind_failed);
+
+    auto cleanup_listener = scope_guard([&] {
+        close_socket(listener);
+    });
+
+    auto const loopback = std::uint32_t{htonl(INADDR_LOOPBACK)};
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = loopback;
+    address.sin_port = 0;
+
+    if (::bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0)
+        return std::unexpected(cppx::http::net_error::bind_failed);
+    if (::listen(listener, 1) != 0)
+        return std::unexpected(cppx::http::net_error::bind_failed);
+
+    auto length = static_cast<int>(sizeof(address));
+    if (::getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length) != 0)
+        return std::unexpected(cppx::http::net_error::bind_failed);
+
+    auto writer = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (writer == invalid_socket)
+        return std::unexpected(cppx::http::net_error::connect_refused);
+
+    if (::connect(writer, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+        close_socket(writer);
+        return std::unexpected(cppx::http::net_error::connect_refused);
+    }
+
+    auto reader = ::accept(listener, nullptr, nullptr);
+    if (reader == invalid_socket) {
+        close_socket(writer);
+        return std::unexpected(cppx::http::net_error::accept_failed);
+    }
+
+    return std::pair{reader, writer};
+}
+
+#else
+using native_socket = int;
+inline constexpr native_socket invalid_socket = -1;
+
+inline void ensure_wsa() {}
+
+inline void close_socket(native_socket fd) {
+    if (fd >= 0)
+        ::close(fd);
+}
+
+inline auto last_socket_error() -> int {
+    return errno;
+}
+
+inline auto would_block(int error) -> bool {
+    return error == EAGAIN
+        || error == EWOULDBLOCK
+        || error == EINPROGRESS;
+}
+
+inline void set_nonblocking(native_socket fd) {
+    auto const flags = ::fcntl(fd, F_GETFL, 0);
+    ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+#endif
+
+} // namespace detail
+
+using native_socket = detail::native_socket;
 
 class event_loop {
 public:
     event_loop() {
 #if defined(__APPLE__)
         fd_ = ::kqueue();
-#elif defined(__linux__)
-        fd_ = ::epoll_create1(0);
-#endif
-        // Create a pipe for cross-thread wakeup and ready-queue drain.
         int fds[2];
         ::pipe(fds);
         wake_read_ = fds[0];
         wake_write_ = fds[1];
-        set_nonblocking(wake_read_);
-        set_nonblocking(wake_write_);
+        detail::set_nonblocking(wake_read_);
+        detail::set_nonblocking(wake_write_);
 
-#if defined(__APPLE__)
-        struct kevent ev;
-        EV_SET(&ev, wake_read_, EVFILT_READ, EV_ADD, 0, 0, nullptr);
-        ::kevent(fd_, &ev, 1, nullptr, 0, nullptr);
+        struct kevent event;
+        EV_SET(&event, wake_read_, EVFILT_READ, EV_ADD, 0, 0, nullptr);
+        ::kevent(fd_, &event, 1, nullptr, 0, nullptr);
 #elif defined(__linux__)
-        struct epoll_event ev;
-        ev.events = EPOLLIN;
-        ev.data.fd = wake_read_;
-        ::epoll_ctl(fd_, EPOLL_CTL_ADD, wake_read_, &ev);
+        fd_ = ::epoll_create1(0);
+        int fds[2];
+        ::pipe(fds);
+        wake_read_ = fds[0];
+        wake_write_ = fds[1];
+        detail::set_nonblocking(wake_read_);
+        detail::set_nonblocking(wake_write_);
+
+        struct epoll_event event{};
+        event.events = EPOLLIN;
+        event.data.fd = wake_read_;
+        ::epoll_ctl(fd_, EPOLL_CTL_ADD, wake_read_, &event);
+#elif defined(_WIN32)
+        detail::ensure_wsa();
+        auto wake_pair = detail::create_socket_pair();
+        if (!wake_pair)
+            throw std::runtime_error{"failed to create async wake socket pair"};
+        wake_read_ = wake_pair->first;
+        wake_write_ = wake_pair->second;
+        detail::set_nonblocking(wake_read_);
+        detail::set_nonblocking(wake_write_);
 #endif
     }
 
     ~event_loop() {
-        if (fd_ >= 0) ::close(fd_);
-        if (wake_read_ >= 0) ::close(wake_read_);
-        if (wake_write_ >= 0) ::close(wake_write_);
+#if defined(__APPLE__) || defined(__linux__)
+        if (fd_ >= 0)
+            ::close(fd_);
+        if (wake_read_ >= 0)
+            ::close(wake_read_);
+        if (wake_write_ >= 0)
+            ::close(wake_write_);
+#elif defined(_WIN32)
+        detail::close_socket(wake_read_);
+        detail::close_socket(wake_write_);
+#endif
     }
 
     event_loop(event_loop const&) = delete;
     auto operator=(event_loop const&) -> event_loop& = delete;
 
-    // executor_engine interface.
-    void schedule(std::coroutine_handle<> h) {
-        ready_.push_back(h);
+    void schedule(std::coroutine_handle<> handle) {
+        ready_.push_back(handle);
+        wakeup();
     }
 
     void run() {
+        auto* previous = current_loop;
+        current_loop = this;
+        auto restore = detail::scope_guard([&] {
+            current_loop = previous;
+        });
+
         running_ = true;
         while (running_) {
-            // Drain ready queue first.
             while (!ready_.empty()) {
-                auto h = ready_.front();
+                auto handle = ready_.front();
                 ready_.pop_front();
-                if (!h.done()) h.resume();
+                if (!handle.done())
+                    handle.resume();
             }
 
-            if (!running_) break;
-            if (ready_.empty() && io_count_ == 0 && timers_.empty()) break;
+            if (!running_)
+                break;
+
+#if defined(_WIN32)
+            if (ready_.empty()
+                && read_waiters_.empty()
+                && write_waiters_.empty()
+                && timers_.empty()) {
+                break;
+            }
+#else
+            if (ready_.empty() && io_count_ == 0 && timers_.empty())
+                break;
+#endif
 
             wait_for_events();
         }
     }
 
-    void stop() { running_ = false; wakeup(); }
+    void stop() {
+        running_ = false;
+        wakeup();
+    }
 
-    // ---- I/O registration (for async stream engines) --------------------
-
-    // Register interest in a fd becoming readable. When ready, the
-    // coroutine handle is scheduled for resumption.
-    void watch_readable(int fd, std::coroutine_handle<> h) {
+    void watch_readable(native_socket fd, std::coroutine_handle<> handle) {
+#if defined(_WIN32)
+        if (!read_waiters_.contains(fd))
+            ++io_count_;
+        read_waiters_[fd] = handle;
+#elif defined(__APPLE__)
         ++io_count_;
-#if defined(__APPLE__)
-        struct kevent ev;
-        EV_SET(&ev, fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0,
-               reinterpret_cast<void*>(h.address()));
-        ::kevent(fd_, &ev, 1, nullptr, 0, nullptr);
+        struct kevent event;
+        EV_SET(&event, fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0,
+               reinterpret_cast<void*>(handle.address()));
+        ::kevent(fd_, &event, 1, nullptr, 0, nullptr);
 #elif defined(__linux__)
-        struct epoll_event ev;
-        ev.events = EPOLLIN | EPOLLONESHOT;
-        ev.data.ptr = h.address();
-        if (::epoll_ctl(fd_, EPOLL_CTL_MOD, fd, &ev) < 0)
-            ::epoll_ctl(fd_, EPOLL_CTL_ADD, fd, &ev);
+        ++io_count_;
+        struct epoll_event event{};
+        event.events = EPOLLIN | EPOLLONESHOT;
+        event.data.ptr = handle.address();
+        if (::epoll_ctl(fd_, EPOLL_CTL_MOD, fd, &event) < 0)
+            ::epoll_ctl(fd_, EPOLL_CTL_ADD, fd, &event);
 #endif
     }
 
-    void watch_writable(int fd, std::coroutine_handle<> h) {
+    void watch_writable(native_socket fd, std::coroutine_handle<> handle) {
+#if defined(_WIN32)
+        if (!write_waiters_.contains(fd))
+            ++io_count_;
+        write_waiters_[fd] = handle;
+#elif defined(__APPLE__)
         ++io_count_;
-#if defined(__APPLE__)
-        struct kevent ev;
-        EV_SET(&ev, fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0,
-               reinterpret_cast<void*>(h.address()));
-        ::kevent(fd_, &ev, 1, nullptr, 0, nullptr);
+        struct kevent event;
+        EV_SET(&event, fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0,
+               reinterpret_cast<void*>(handle.address()));
+        ::kevent(fd_, &event, 1, nullptr, 0, nullptr);
 #elif defined(__linux__)
-        struct epoll_event ev;
-        ev.events = EPOLLOUT | EPOLLONESHOT;
-        ev.data.ptr = h.address();
-        if (::epoll_ctl(fd_, EPOLL_CTL_MOD, fd, &ev) < 0)
-            ::epoll_ctl(fd_, EPOLL_CTL_ADD, fd, &ev);
+        ++io_count_;
+        struct epoll_event event{};
+        event.events = EPOLLOUT | EPOLLONESHOT;
+        event.data.ptr = handle.address();
+        if (::epoll_ctl(fd_, EPOLL_CTL_MOD, fd, &event) < 0)
+            ::epoll_ctl(fd_, EPOLL_CTL_ADD, fd, &event);
 #endif
     }
 
-    // ---- timer registration ---------------------------------------------
-
-    void schedule_after(std::chrono::steady_clock::duration dt,
-                        std::coroutine_handle<> h) {
-        auto deadline = std::chrono::steady_clock::now() + dt;
-        timers_.push({deadline, h});
+    void schedule_after(
+        std::chrono::steady_clock::duration duration,
+        std::coroutine_handle<> handle) {
+        timers_.push({std::chrono::steady_clock::now() + duration, handle});
         wakeup();
     }
 
@@ -155,36 +349,50 @@ private:
     struct timer_entry {
         std::chrono::steady_clock::time_point when;
         std::coroutine_handle<> handle;
-        auto operator>(timer_entry const& o) const { return when > o.when; }
+
+        auto operator>(timer_entry const& other) const -> bool {
+            return when > other.when;
+        }
     };
 
-    void set_nonblocking(int fd) {
-        int flags = ::fcntl(fd, F_GETFL, 0);
-        ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    }
-
     void wakeup() {
-        char c = 1;
-        [[maybe_unused]] auto _ = ::write(wake_write_, &c, 1);
+#if defined(__APPLE__) || defined(__linux__)
+        auto const byte = char{1};
+        [[maybe_unused]] auto const ignored =
+            ::write(wake_write_, &byte, sizeof(byte));
+#elif defined(_WIN32)
+        auto const byte = char{1};
+        [[maybe_unused]] auto const ignored =
+            ::send(wake_write_, &byte, 1, 0);
+#endif
     }
 
-    void drain_wakeup_pipe() {
-        char buf[64];
-        while (::read(wake_read_, buf, sizeof(buf)) > 0) {}
+    void drain_wakeup() {
+#if defined(__APPLE__) || defined(__linux__)
+        auto buffer = std::array<char, 64>{};
+        while (::read(wake_read_, buffer.data(), buffer.size()) > 0) {}
+#elif defined(_WIN32)
+        auto buffer = std::array<char, 64>{};
+        while (::recv(wake_read_, buffer.data(), static_cast<int>(buffer.size()), 0) > 0) {}
+#endif
     }
 
-    auto compute_timeout_ms() -> int {
-        if (!ready_.empty()) return 0;
-        if (timers_.empty()) return 500; // idle poll interval
-        auto now = std::chrono::steady_clock::now();
-        auto dt = timers_.top().when - now;
-        if (dt <= std::chrono::steady_clock::duration::zero()) return 0;
+    auto compute_timeout_ms() const -> int {
+        if (!ready_.empty())
+            return 0;
+        if (timers_.empty())
+            return 500;
+
+        auto const now = std::chrono::steady_clock::now();
+        auto const delta = timers_.top().when - now;
+        if (delta <= std::chrono::steady_clock::duration::zero())
+            return 0;
         return static_cast<int>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(dt).count());
+            std::chrono::duration_cast<std::chrono::milliseconds>(delta).count());
     }
 
     void fire_expired_timers() {
-        auto now = std::chrono::steady_clock::now();
+        auto const now = std::chrono::steady_clock::now();
         while (!timers_.empty() && timers_.top().when <= now) {
             ready_.push_back(timers_.top().handle);
             timers_.pop();
@@ -193,298 +401,565 @@ private:
 
     void wait_for_events() {
         fire_expired_timers();
-        if (!ready_.empty()) return;
+        if (!ready_.empty())
+            return;
 
-        auto timeout = compute_timeout_ms();
+        auto const timeout_ms = compute_timeout_ms();
 
 #if defined(__APPLE__)
         struct kevent events[64];
-        struct timespec ts;
-        ts.tv_sec = timeout / 1000;
-        ts.tv_nsec = (timeout % 1000) * 1000000L;
-        int n = ::kevent(fd_, nullptr, 0, events, 64, &ts);
-        for (int i = 0; i < n; ++i) {
+        struct timespec timeout{};
+        timeout.tv_sec = timeout_ms / 1000;
+        timeout.tv_nsec = (timeout_ms % 1000) * 1000000L;
+        auto const count = ::kevent(fd_, nullptr, 0, events, 64, &timeout);
+        for (int i = 0; i < count; ++i) {
             if (static_cast<int>(events[i].ident) == wake_read_) {
-                drain_wakeup_pipe();
+                drain_wakeup();
             } else if (events[i].udata) {
                 --io_count_;
-                ready_.push_back(std::coroutine_handle<>::from_address(
-                    events[i].udata));
+                ready_.push_back(
+                    std::coroutine_handle<>::from_address(events[i].udata));
             }
         }
 #elif defined(__linux__)
         struct epoll_event events[64];
-        int n = ::epoll_wait(fd_, events, 64, timeout);
-        for (int i = 0; i < n; ++i) {
+        auto const count = ::epoll_wait(fd_, events, 64, timeout_ms);
+        for (int i = 0; i < count; ++i) {
             if (events[i].data.fd == wake_read_) {
-                drain_wakeup_pipe();
+                drain_wakeup();
             } else if (events[i].data.ptr) {
                 --io_count_;
-                ready_.push_back(std::coroutine_handle<>::from_address(
-                    events[i].data.ptr));
+                ready_.push_back(
+                    std::coroutine_handle<>::from_address(events[i].data.ptr));
             }
         }
+#elif defined(_WIN32)
+        fd_set readfds{};
+        fd_set writefds{};
+        fd_set exceptfds{};
+        FD_ZERO(&readfds);
+        FD_ZERO(&writefds);
+        FD_ZERO(&exceptfds);
+        FD_SET(wake_read_, &readfds);
+
+        for (auto const& [fd, _] : read_waiters_)
+            FD_SET(fd, &readfds);
+        for (auto const& [fd, _] : write_waiters_) {
+            FD_SET(fd, &writefds);
+            FD_SET(fd, &exceptfds);
+        }
+
+        auto timeout = timeval{};
+        timeout.tv_sec = timeout_ms / 1000;
+        timeout.tv_usec = (timeout_ms % 1000) * 1000;
+        [[maybe_unused]] auto const count =
+            ::select(0, &readfds, &writefds, &exceptfds, &timeout);
+
+        if (FD_ISSET(wake_read_, &readfds))
+            drain_wakeup();
+
+        auto ready_reads = std::vector<native_socket>{};
+        for (auto const& [fd, _] : read_waiters_) {
+            if (FD_ISSET(fd, &readfds))
+                ready_reads.push_back(fd);
+        }
+        for (auto const fd : ready_reads) {
+            auto const handle = read_waiters_[fd];
+            read_waiters_.erase(fd);
+            --io_count_;
+            ready_.push_back(handle);
+        }
+
+        auto ready_writes = std::vector<native_socket>{};
+        for (auto const& [fd, _] : write_waiters_) {
+            if (FD_ISSET(fd, &writefds) || FD_ISSET(fd, &exceptfds))
+                ready_writes.push_back(fd);
+        }
+        for (auto const fd : ready_writes) {
+            auto const handle = write_waiters_[fd];
+            write_waiters_.erase(fd);
+            --io_count_;
+            ready_.push_back(handle);
+        }
 #endif
+
         fire_expired_timers();
     }
 
+#if defined(__APPLE__) || defined(__linux__)
     int fd_ = -1;
     int wake_read_ = -1;
     int wake_write_ = -1;
+#elif defined(_WIN32)
+    native_socket wake_read_ = detail::invalid_socket;
+    native_socket wake_write_ = detail::invalid_socket;
+    std::unordered_map<native_socket, std::coroutine_handle<>> read_waiters_;
+    std::unordered_map<native_socket, std::coroutine_handle<>> write_waiters_;
+#endif
     bool running_ = false;
     int io_count_ = 0;
     std::deque<std::coroutine_handle<>> ready_;
-    std::priority_queue<timer_entry, std::vector<timer_entry>,
-                        std::greater<>> timers_;
+    std::priority_queue<
+        timer_entry,
+        std::vector<timer_entry>,
+        std::greater<>> timers_;
 };
 
 static_assert(cppx::async::executor_engine<event_loop>);
 
-// ---- async POSIX stream --------------------------------------------------
+class sleep_for_awaiter {
+public:
+    explicit sleep_for_awaiter(std::chrono::steady_clock::duration duration)
+        : duration_{duration} {}
 
-// Per-coroutine storage for the event loop.
-inline thread_local event_loop* current_loop = nullptr;
+    auto await_ready() const noexcept -> bool {
+        return duration_ <= std::chrono::steady_clock::duration::zero();
+    }
+
+    auto await_suspend(std::coroutine_handle<> handle) const -> bool {
+        if (!current_loop)
+            return false;
+        current_loop->schedule_after(duration_, handle);
+        return true;
+    }
+
+    void await_resume() const noexcept {}
+
+private:
+    std::chrono::steady_clock::duration duration_;
+};
+
+inline auto sleep_for(std::chrono::steady_clock::duration duration)
+    -> sleep_for_awaiter {
+    return sleep_for_awaiter{duration};
+}
 
 class async_stream {
 public:
+    async_stream() = default;
+    async_stream(async_stream const&) = delete;
+    auto operator=(async_stream const&) -> async_stream& = delete;
+
+    async_stream(async_stream&& other) noexcept
+        : fd_{std::exchange(other.fd_, detail::invalid_socket)} {}
+
+    auto operator=(async_stream&& other) noexcept -> async_stream& {
+        if (this != &other) {
+            close();
+            fd_ = std::exchange(other.fd_, detail::invalid_socket);
+        }
+        return *this;
+    }
+
+    ~async_stream() {
+        close();
+    }
+
     static auto connect(std::string_view host, std::uint16_t port)
         -> cppx::async::task<std::expected<async_stream, cppx::http::net_error>> {
-        // Resolve address.
+        detail::ensure_wsa();
+
+        auto port_string = std::to_string(port);
+        auto host_string = std::string{host};
+
         struct addrinfo hints{};
         hints.ai_family = AF_UNSPEC;
         hints.ai_socktype = SOCK_STREAM;
-        auto port_str = std::to_string(port);
-        auto host_str = std::string{host};
-        struct addrinfo* res = nullptr;
-        if (::getaddrinfo(host_str.c_str(), port_str.c_str(),
-                          &hints, &res) != 0 || !res) {
+        hints.ai_protocol = IPPROTO_TCP;
+
+        struct addrinfo* result = nullptr;
+        if (::getaddrinfo(
+                host_string.c_str(),
+                port_string.c_str(),
+                &hints,
+                &result) != 0
+            || !result) {
             co_return std::unexpected(cppx::http::net_error::resolve_failed);
         }
 
-        int fd = ::socket(res->ai_family, res->ai_socktype,
-                          res->ai_protocol);
-        if (fd < 0) {
-            ::freeaddrinfo(res);
+        auto cleanup = detail::scope_guard([&] {
+            ::freeaddrinfo(result);
+        });
+
+        auto fd = ::socket(
+            result->ai_family,
+            result->ai_socktype,
+            result->ai_protocol);
+        if (fd == detail::invalid_socket)
             co_return std::unexpected(cppx::http::net_error::connect_refused);
-        }
 
-        // Set non-blocking for async connect.
-        int flags = ::fcntl(fd, F_GETFL, 0);
-        ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        detail::set_nonblocking(fd);
 
-        int rc = ::connect(fd, res->ai_addr, res->ai_addrlen);
-        ::freeaddrinfo(res);
-
-        if (rc < 0 && errno == EINPROGRESS) {
-            // Wait for writable (connect completion).
-            co_await wait_writable(fd);
-
-            int err = 0;
-            socklen_t len = sizeof(err);
-            ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
-            if (err != 0) {
-                ::close(fd);
-                co_return std::unexpected(
-                    cppx::http::net_error::connect_refused);
+#if defined(_WIN32)
+        auto const rc = ::connect(
+            fd,
+            result->ai_addr,
+            static_cast<int>(result->ai_addrlen));
+        if (rc == SOCKET_ERROR) {
+            auto const error = detail::last_socket_error();
+            if (!detail::would_block(error)) {
+                detail::close_socket(fd);
+                co_return std::unexpected(cppx::http::net_error::connect_refused);
             }
-        } else if (rc < 0) {
-            ::close(fd);
-            co_return std::unexpected(cppx::http::net_error::connect_refused);
+
+            co_await wait_writable(fd);
+            int socket_error = 0;
+            auto length = static_cast<int>(sizeof(socket_error));
+            ::getsockopt(
+                fd,
+                SOL_SOCKET,
+                SO_ERROR,
+                reinterpret_cast<char*>(&socket_error),
+                &length);
+            if (socket_error != 0) {
+                detail::close_socket(fd);
+                co_return std::unexpected(cppx::http::net_error::connect_refused);
+            }
         }
+#else
+        auto const rc = ::connect(fd, result->ai_addr, result->ai_addrlen);
+        if (rc < 0) {
+            if (errno != EINPROGRESS) {
+                detail::close_socket(fd);
+                co_return std::unexpected(cppx::http::net_error::connect_refused);
+            }
+
+            co_await wait_writable(fd);
+            int socket_error = 0;
+            socklen_t length = sizeof(socket_error);
+            ::getsockopt(
+                fd,
+                SOL_SOCKET,
+                SO_ERROR,
+                &socket_error,
+                &length);
+            if (socket_error != 0) {
+                detail::close_socket(fd);
+                co_return std::unexpected(cppx::http::net_error::connect_refused);
+            }
+        }
+#endif
 
         co_return async_stream{fd};
     }
 
-    auto send(std::span<std::byte const> data) const
+    auto send(std::span<std::byte const> data)
         -> cppx::async::task<std::expected<std::size_t, cppx::http::net_error>> {
         while (true) {
-            auto n = ::send(fd_, data.data(), data.size(), 0);
-            if (n >= 0) co_return static_cast<std::size_t>(n);
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+#if defined(_WIN32)
+            auto const sent = ::send(
+                fd_,
+                reinterpret_cast<char const*>(data.data()),
+                static_cast<int>(data.size()),
+                0);
+            if (sent != SOCKET_ERROR)
+                co_return static_cast<std::size_t>(sent);
+
+            if (detail::would_block(detail::last_socket_error())) {
                 co_await wait_writable(fd_);
                 continue;
             }
+#else
+            auto const sent = ::send(fd_, data.data(), data.size(), 0);
+            if (sent >= 0)
+                co_return static_cast<std::size_t>(sent);
+
+            if (detail::would_block(errno)) {
+                co_await wait_writable(fd_);
+                continue;
+            }
+#endif
             co_return std::unexpected(cppx::http::net_error::send_failed);
         }
     }
 
-    auto recv(std::span<std::byte> buf) const
+    auto recv(std::span<std::byte> buffer)
         -> cppx::async::task<std::expected<std::size_t, cppx::http::net_error>> {
         while (true) {
-            auto n = ::recv(fd_, buf.data(), buf.size(), 0);
-            if (n > 0) co_return static_cast<std::size_t>(n);
-            if (n == 0)
-                co_return std::unexpected(
-                    cppx::http::net_error::connection_closed);
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+#if defined(_WIN32)
+            auto const received = ::recv(
+                fd_,
+                reinterpret_cast<char*>(buffer.data()),
+                static_cast<int>(buffer.size()),
+                0);
+            if (received > 0)
+                co_return static_cast<std::size_t>(received);
+            if (received == 0)
+                co_return std::unexpected(cppx::http::net_error::connection_closed);
+
+            if (detail::would_block(detail::last_socket_error())) {
                 co_await wait_readable(fd_);
                 continue;
             }
+#else
+            auto const received = ::recv(fd_, buffer.data(), buffer.size(), 0);
+            if (received > 0)
+                co_return static_cast<std::size_t>(received);
+            if (received == 0)
+                co_return std::unexpected(cppx::http::net_error::connection_closed);
+
+            if (detail::would_block(errno)) {
+                co_await wait_readable(fd_);
+                continue;
+            }
+#endif
             co_return std::unexpected(cppx::http::net_error::recv_failed);
         }
     }
 
-    void close() const {
-        if (fd_ >= 0) ::close(fd_);
+    void close() {
+        if (fd_ != detail::invalid_socket) {
+            detail::close_socket(fd_);
+            fd_ = detail::invalid_socket;
+        }
     }
 
-    auto fd() const -> int { return fd_; }
+    auto native_handle() const -> native_socket {
+        return fd_;
+    }
 
 private:
     friend class async_listener;
-    explicit async_stream(int fd) : fd_{fd} {}
-    int fd_;
+
+    explicit async_stream(native_socket fd) : fd_{fd} {}
 
     struct io_awaiter {
-        int fd;
-        bool writable; // false = readable
+        native_socket fd;
+        bool writable = false;
 
-        bool await_ready() const noexcept { return false; }
+        auto await_ready() const noexcept -> bool {
+            return false;
+        }
 
-        void await_suspend(std::coroutine_handle<> h) const {
-            if (current_loop) {
-                if (writable)
-                    current_loop->watch_writable(fd, h);
-                else
-                    current_loop->watch_readable(fd, h);
-            }
+        void await_suspend(std::coroutine_handle<> handle) const {
+            if (!current_loop)
+                return;
+            if (writable)
+                current_loop->watch_writable(fd, handle);
+            else
+                current_loop->watch_readable(fd, handle);
         }
 
         void await_resume() const noexcept {}
     };
 
-    static auto wait_readable(int fd) -> io_awaiter {
-        return {fd, false};
+    static auto wait_readable(native_socket fd) -> io_awaiter {
+        return io_awaiter{fd, false};
     }
-    static auto wait_writable(int fd) -> io_awaiter {
-        return {fd, true};
+
+    static auto wait_writable(native_socket fd) -> io_awaiter {
+        return io_awaiter{fd, true};
     }
+
+    native_socket fd_ = detail::invalid_socket;
 };
 
 static_assert(cppx::http::async_stream_engine<async_stream>);
 
-// ---- async POSIX listener ------------------------------------------------
-
 class async_listener {
 public:
+    async_listener() = default;
+    async_listener(async_listener const&) = delete;
+    auto operator=(async_listener const&) -> async_listener& = delete;
+
+    async_listener(async_listener&& other) noexcept
+        : fd_{std::exchange(other.fd_, detail::invalid_socket)} {}
+
+    auto operator=(async_listener&& other) noexcept -> async_listener& {
+        if (this != &other) {
+            close();
+            fd_ = std::exchange(other.fd_, detail::invalid_socket);
+        }
+        return *this;
+    }
+
+    ~async_listener() {
+        close();
+    }
+
     static auto bind(std::string_view host, std::uint16_t port)
         -> cppx::async::task<std::expected<async_listener, cppx::http::net_error>> {
+        detail::ensure_wsa();
+
+        auto port_string = std::to_string(port);
+        auto host_string = std::string{host};
+
         struct addrinfo hints{};
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
         hints.ai_flags = AI_PASSIVE;
-        auto port_str = std::to_string(port);
-        auto host_str = std::string{host};
-        struct addrinfo* res = nullptr;
-        if (::getaddrinfo(host_str.empty() ? nullptr : host_str.c_str(),
-                          port_str.c_str(), &hints, &res) != 0 || !res)
+
+        struct addrinfo* result = nullptr;
+        if (::getaddrinfo(
+                host_string.empty() ? nullptr : host_string.c_str(),
+                port_string.c_str(),
+                &hints,
+                &result) != 0
+            || !result) {
             co_return std::unexpected(cppx::http::net_error::resolve_failed);
+        }
 
-        int fd = ::socket(res->ai_family, res->ai_socktype,
-                          res->ai_protocol);
-        if (fd < 0) {
-            ::freeaddrinfo(res);
+        auto cleanup = detail::scope_guard([&] {
+            ::freeaddrinfo(result);
+        });
+
+        auto fd = ::socket(
+            result->ai_family,
+            result->ai_socktype,
+            result->ai_protocol);
+        if (fd == detail::invalid_socket)
+            co_return std::unexpected(cppx::http::net_error::bind_failed);
+
+        auto const reuse = 1;
+#if defined(_WIN32)
+        ::setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            reinterpret_cast<char const*>(&reuse),
+            sizeof(reuse));
+#else
+        ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#endif
+
+#if defined(_WIN32)
+        if (::bind(
+                fd,
+                result->ai_addr,
+                static_cast<int>(result->ai_addrlen)) != 0) {
+#else
+        if (::bind(fd, result->ai_addr, result->ai_addrlen) != 0) {
+#endif
+            detail::close_socket(fd);
             co_return std::unexpected(cppx::http::net_error::bind_failed);
         }
 
-        int opt = 1;
-        ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-        if (::bind(fd, res->ai_addr, res->ai_addrlen) < 0) {
-            ::freeaddrinfo(res);
-            ::close(fd);
-            co_return std::unexpected(cppx::http::net_error::bind_failed);
-        }
-        ::freeaddrinfo(res);
-
-        if (::listen(fd, 128) < 0) {
-            ::close(fd);
+        if (::listen(fd, 128) != 0) {
+            detail::close_socket(fd);
             co_return std::unexpected(cppx::http::net_error::bind_failed);
         }
 
-        // Set non-blocking for async accept.
-        int flags = ::fcntl(fd, F_GETFL, 0);
-        ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-
+        detail::set_nonblocking(fd);
         co_return async_listener{fd};
     }
 
-    auto accept() const
+    auto accept()
         -> cppx::async::task<std::expected<async_stream, cppx::http::net_error>> {
         while (true) {
-            struct sockaddr_storage addr;
-            socklen_t len = sizeof(addr);
-            int client = ::accept(fd_,
-                                  reinterpret_cast<struct sockaddr*>(&addr),
-                                  &len);
-            if (client >= 0) {
-                int flags = ::fcntl(client, F_GETFL, 0);
-                ::fcntl(client, F_SETFL, flags | O_NONBLOCK);
+#if defined(_WIN32)
+            auto client = ::accept(fd_, nullptr, nullptr);
+            if (client != detail::invalid_socket) {
+                detail::set_nonblocking(client);
                 co_return async_stream{client};
             }
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+
+            if (detail::would_block(detail::last_socket_error())) {
                 co_await wait_readable();
                 continue;
             }
+#else
+            sockaddr_storage address{};
+            socklen_t length = sizeof(address);
+            auto client = ::accept(
+                fd_,
+                reinterpret_cast<sockaddr*>(&address),
+                &length);
+            if (client >= 0) {
+                detail::set_nonblocking(client);
+                co_return async_stream{client};
+            }
+
+            if (detail::would_block(errno)) {
+                co_await wait_readable();
+                continue;
+            }
+#endif
             co_return std::unexpected(cppx::http::net_error::accept_failed);
         }
     }
 
-    void close() const {
-        if (fd_ >= 0) ::close(fd_);
+    void close() {
+        if (fd_ != detail::invalid_socket) {
+            detail::close_socket(fd_);
+            fd_ = detail::invalid_socket;
+        }
     }
 
     auto local_port() const -> std::uint16_t {
-        struct sockaddr_in addr;
-        socklen_t len = sizeof(addr);
-        ::getsockname(fd_, reinterpret_cast<struct sockaddr*>(&addr), &len);
-        return ntohs(addr.sin_port);
+#if defined(_WIN32)
+        sockaddr_storage address{};
+        auto length = static_cast<int>(sizeof(address));
+        if (::getsockname(
+                fd_,
+                reinterpret_cast<sockaddr*>(&address),
+                &length) != 0) {
+            return 0;
+        }
+#else
+        sockaddr_storage address{};
+        socklen_t length = sizeof(address);
+        if (::getsockname(
+                fd_,
+                reinterpret_cast<sockaddr*>(&address),
+                &length) != 0) {
+            return 0;
+        }
+#endif
+
+        if (address.ss_family == AF_INET) {
+            return ntohs(
+                reinterpret_cast<sockaddr_in const*>(&address)->sin_port);
+        }
+        if (address.ss_family == AF_INET6) {
+            return ntohs(
+                reinterpret_cast<sockaddr_in6 const*>(&address)->sin6_port);
+        }
+        return 0;
     }
 
 private:
-    explicit async_listener(int fd) : fd_{fd} {}
-    int fd_;
+    explicit async_listener(native_socket fd) : fd_{fd} {}
 
     struct accept_awaiter {
-        int fd;
-        bool await_ready() const noexcept { return false; }
-        void await_suspend(std::coroutine_handle<> h) const {
-            if (current_loop)
-                current_loop->watch_readable(fd, h);
+        native_socket fd;
+
+        auto await_ready() const noexcept -> bool {
+            return false;
         }
+
+        void await_suspend(std::coroutine_handle<> handle) const {
+            if (current_loop)
+                current_loop->watch_readable(fd, handle);
+        }
+
         void await_resume() const noexcept {}
     };
 
     auto wait_readable() const -> accept_awaiter {
-        return {fd_};
+        return accept_awaiter{fd_};
     }
+
+    native_socket fd_ = detail::invalid_socket;
 };
 
 static_assert(cppx::http::async_listener_engine<async_listener, async_stream>);
 
-// ---- run — convenience to drive a task on an event loop ------------------
-
 template <class T>
-auto run(cppx::async::task<T>& t) -> T {
-    event_loop loop;
-    auto* prev = current_loop;
-    current_loop = &loop;
-    loop.schedule(t.handle());
+auto run(cppx::async::task<T>& task) -> T {
+    auto loop = event_loop{};
+    loop.schedule(task.handle());
     loop.run();
-    current_loop = prev;
-    return t.result();
+    return task.result();
 }
 
-inline void run(cppx::async::task<void>& t) {
-    event_loop loop;
-    auto* prev = current_loop;
-    current_loop = &loop;
-    loop.schedule(t.handle());
+inline void run(cppx::async::task<void>& task) {
+    auto loop = event_loop{};
+    loop.schedule(task.handle());
     loop.run();
-    current_loop = prev;
-    t.result();
+    task.result();
 }
 
 } // namespace cppx::async::system
 
-#endif // !__wasi__ && !_WIN32
+#endif // !defined(__wasi__)

@@ -9,7 +9,8 @@ import std;
 
 cppx::test::context tc;
 
-#if !defined(__wasi__) && !defined(_WIN32)
+#if !defined(__wasi__)
+using namespace std::chrono_literals;
 
 // ---- TCP round-trip via event loop ---------------------------------------
 
@@ -116,13 +117,38 @@ void test_event_loop_stops() {
     tc.check(done, "event loop stops when no work remains");
 }
 
-#endif // !__wasi__ && !_WIN32
+// ---- timer scheduling ----------------------------------------------------
+
+cppx::async::task<void> sleep_for_test(bool& resumed,
+                                       std::chrono::milliseconds& elapsed) {
+    auto const start = std::chrono::steady_clock::now();
+    co_await cppx::async::system::sleep_for(50ms);
+    elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start);
+    resumed = true;
+}
+
+void test_sleep_for() {
+    bool resumed = false;
+    auto elapsed = std::chrono::milliseconds{0};
+    auto t = sleep_for_test(resumed, elapsed);
+    cppx::async::system::event_loop loop;
+    loop.schedule(t.handle());
+    loop.run();
+    t.result();
+    tc.check(resumed, "sleep_for resumes coroutine");
+    tc.check(elapsed >= 30ms,
+             "sleep_for waits for approximately the requested duration");
+}
+
+#endif // !__wasi__
 
 int main() {
-#if !defined(__wasi__) && !defined(_WIN32)
+#if !defined(__wasi__)
     test_tcp_roundtrip();
     test_connect_refused();
     test_event_loop_stops();
+    test_sleep_for();
 #endif
     return tc.summary("cppx.async.system");
 }

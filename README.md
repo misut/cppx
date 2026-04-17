@@ -32,7 +32,7 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.os` | OS-facing capability declarations such as `open_error`. |
 | `cppx.os.system` | System-backed OS helpers such as `open_url`. |
 | `cppx.async` | Coroutine primitives: `task<T>`, `generator<T>`, `executor_engine`, `run`, `async_scope`, `when_all`. |
-| `cppx.async.system` | System event-loop executor and networking helpers for async I/O. |
+| `cppx.async.system` | System event-loop executor, timer awaitables, and networking helpers for async I/O. |
 | `cppx.async.test` | Deterministic coroutine test executor with virtual time. |
 | `cppx.test` | Minimal test helpers for standalone executables. |
 | `cppx.http` | Core HTTP types, serializer, parser, concepts, and helpers. |
