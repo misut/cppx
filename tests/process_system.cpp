@@ -91,6 +91,54 @@ void test_run_timeout() {
              "run returns timeout result");
 }
 
+void test_capture_collects_stdout_stderr_and_exit_code() {
+#if defined(_WIN32)
+    auto result = cppx::process::system::capture({
+        .program = "cmd",
+        .args = {"/c", "(echo stdout-line)&(echo stderr-line 1>&2)&exit /b 9"},
+    });
+#else
+    auto result = cppx::process::system::capture({
+        .program = "sh",
+        .args = {"-c", "printf 'stdout-line\\n'; printf 'stderr-line\\n' >&2; exit 9"},
+    });
+#endif
+
+    tc.check(result.has_value(), "capture succeeds");
+    if (!result)
+        return;
+
+    tc.check(result->exit_code == 9 && !result->timed_out,
+             "capture preserves exit code");
+    tc.check(result->stdout_text.contains("stdout-line"),
+             "capture collects stdout");
+    tc.check(result->stderr_text.contains("stderr-line"),
+             "capture collects stderr");
+}
+
+void test_capture_timeout() {
+#if defined(_WIN32)
+    auto result = cppx::process::system::capture({
+        .program = "powershell",
+        .args = {"-NoProfile", "-Command", "Write-Output before; Start-Sleep -Seconds 2"},
+        .timeout = std::chrono::milliseconds{100},
+    });
+#else
+    auto result = cppx::process::system::capture({
+        .program = "sh",
+        .args = {"-c", "printf before; sleep 2"},
+        .timeout = std::chrono::milliseconds{100},
+    });
+#endif
+
+    tc.check(result.has_value(), "capture timeout result returned");
+    if (!result)
+        return;
+
+    tc.check(result->timed_out && result->exit_code == 124,
+             "capture returns timeout exit code");
+}
+
 #if !defined(_WIN32)
 void test_run_normalizes_signal_exit() {
     auto result = cppx::process::system::run({
@@ -108,6 +156,8 @@ int main() {
     test_run_honors_cwd();
     test_run_applies_env_overrides();
     test_run_timeout();
+    test_capture_collects_stdout_stderr_and_exit_code();
+    test_capture_timeout();
 #if !defined(_WIN32)
     test_run_normalizes_signal_exit();
 #endif
