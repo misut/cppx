@@ -82,8 +82,8 @@ void test_parse_os_and_arch() {
 }
 
 void test_parse_platform() {
-    auto linux = cppx::platform::parse_platform("linux-x86_64");
-    tc.check(linux.os == OS::Linux && linux.arch == Arch::X86_64,
+    auto linux_platform = cppx::platform::parse_platform("linux-x86_64");
+    tc.check(linux_platform.os == OS::Linux && linux_platform.arch == Arch::X86_64,
              "parse_platform canonical short form");
 
     auto partial_os = cppx::platform::parse_platform("linux");
@@ -107,10 +107,10 @@ void test_target_triple_helper() {
                  && wasi->arch == Arch::Wasm32,
              "platform_from_target_triple supports wasm32-wasi");
 
-    auto linux = cppx::platform::platform_from_target_triple("linux-x86_64");
-    tc.check(linux.has_value()
-                 && linux->os == OS::Linux
-                 && linux->arch == Arch::X86_64,
+    auto linux_target = cppx::platform::platform_from_target_triple("linux-x86_64");
+    tc.check(linux_target.has_value()
+                 && linux_target->os == OS::Linux
+                 && linux_target->arch == Arch::X86_64,
              "platform_from_target_triple supports short form");
 
     auto invalid = cppx::platform::platform_from_target_triple("linux");
