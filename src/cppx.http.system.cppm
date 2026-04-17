@@ -5,7 +5,8 @@
 // TLS backends:
 //   macOS  — Security.framework (SecureTransport)
 //   Linux  — system OpenSSL (libssl/libcrypto)
-//   Windows — SChannel (SSPI)
+//   Windows — SChannel (SSPI) for low-level streams, WinHTTP for the
+//             preferred system HTTP client facade
 
 module;
 
@@ -33,10 +34,14 @@ module;
 
 #if defined(_WIN32)
 #define SECURITY_WIN32
+#define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 #pragma comment(lib, "ws2_32.lib")
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
 #include <security.h>
 #include <schannel.h>
 #include <sspi.h>
@@ -630,7 +635,10 @@ using listener = win_listener;
 static_assert(cppx::http::stream_engine<stream>);
 static_assert(cppx::http::listener_engine<listener, stream>);
 
-// ---- Windows TLS — SChannel (simplified client-only) ---------------------
+// ---- Windows TLS — SChannel (legacy low-level client-only path) ----------
+// The preferred first-party HTTP entrypoint on Windows is the WinHTTP-
+// backed system::client/get/download facade below. This transport remains
+// available for low-level stream/TLS seams and compatibility only.
 
 class schannel_tls_stream {
     win_stream raw_;
@@ -966,23 +974,482 @@ auto recv_all(S& s, std::vector<std::byte>& out, std::size_t max_size = 64 * 102
     return {};
 }
 
-// Convenience: HTTPS-capable GET using system stream + TLS.
+#if defined(_WIN32)
+namespace detail {
+
+inline constexpr auto default_get_body_limit = std::size_t{64 * 1024 * 1024};
+inline constexpr auto winhttp_redirect_limit = DWORD{5};
+
+class winhttp_handle {
+    HINTERNET handle_ = nullptr;
+public:
+    winhttp_handle() = default;
+    explicit winhttp_handle(HINTERNET handle) : handle_{handle} {}
+    winhttp_handle(winhttp_handle const&) = delete;
+    auto operator=(winhttp_handle const&) -> winhttp_handle& = delete;
+    winhttp_handle(winhttp_handle&& other) noexcept
+        : handle_{std::exchange(other.handle_, nullptr)} {}
+    auto operator=(winhttp_handle&& other) noexcept -> winhttp_handle& {
+        if (this != &other) {
+            close();
+            handle_ = std::exchange(other.handle_, nullptr);
+        }
+        return *this;
+    }
+    ~winhttp_handle() { close(); }
+
+    void close() {
+        if (handle_) {
+            WinHttpCloseHandle(handle_);
+            handle_ = nullptr;
+        }
+    }
+
+    auto get() const -> HINTERNET { return handle_; }
+    explicit operator bool() const { return handle_ != nullptr; }
+};
+
+struct winhttp_request_context {
+    winhttp_handle session;
+    winhttp_handle connection;
+    winhttp_handle request;
+};
+
+inline auto map_winhttp_error(DWORD err) -> cppx::http::http_error {
+    switch (err) {
+    case ERROR_WINHTTP_INVALID_URL:
+    case ERROR_WINHTTP_UNRECOGNIZED_SCHEME:
+        return cppx::http::http_error::url_parse_failed;
+    case ERROR_WINHTTP_TIMEOUT:
+        return cppx::http::http_error::timeout;
+    case ERROR_WINHTTP_SECURE_FAILURE:
+    case ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED:
+        return cppx::http::http_error::tls_failed;
+    case ERROR_WINHTTP_NAME_NOT_RESOLVED:
+    case ERROR_WINHTTP_CANNOT_CONNECT:
+    case ERROR_WINHTTP_CONNECTION_ERROR:
+    case ERROR_WINHTTP_AUTODETECTION_FAILED:
+        return cppx::http::http_error::connection_failed;
+    case ERROR_WINHTTP_RESEND_REQUEST:
+        return cppx::http::http_error::redirect_limit;
+    default:
+        return cppx::http::http_error::response_parse_failed;
+    }
+}
+
+inline auto utf8_to_wide(std::string_view value)
+    -> std::expected<std::wstring, cppx::http::http_error>
+{
+    if (value.empty()) return std::wstring{};
+    auto len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                   value.data(),
+                                   static_cast<int>(value.size()),
+                                   nullptr, 0);
+    if (len <= 0)
+        return std::unexpected(cppx::http::http_error::response_parse_failed);
+    auto out = std::wstring(static_cast<std::size_t>(len), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                            value.data(),
+                            static_cast<int>(value.size()),
+                            out.data(), len) != len) {
+        return std::unexpected(cppx::http::http_error::response_parse_failed);
+    }
+    return out;
+}
+
+inline auto wide_to_utf8(std::wstring_view value)
+    -> std::expected<std::string, cppx::http::http_error>
+{
+    if (value.empty()) return std::string{};
+    auto len = WideCharToMultiByte(CP_UTF8, 0, value.data(),
+                                   static_cast<int>(value.size()),
+                                   nullptr, 0, nullptr, nullptr);
+    if (len <= 0)
+        return std::unexpected(cppx::http::http_error::response_parse_failed);
+    auto out = std::string(static_cast<std::size_t>(len), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0, value.data(),
+                            static_cast<int>(value.size()),
+                            out.data(), len, nullptr, nullptr) != len) {
+        return std::unexpected(cppx::http::http_error::response_parse_failed);
+    }
+    return out;
+}
+
+inline auto build_target_path(cppx::http::url const& target) -> std::string {
+    auto path = target.path.empty() ? std::string{"/"} : target.path;
+    if (!target.query.empty())
+        path += std::format("?{}", target.query);
+    return path;
+}
+
+inline auto query_status_code(HINTERNET request)
+    -> std::expected<std::uint16_t, cppx::http::http_error>
+{
+    auto status = DWORD{};
+    auto size = DWORD{sizeof(status)};
+    if (!WinHttpQueryHeaders(
+            request,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX,
+            &status, &size, WINHTTP_NO_HEADER_INDEX)) {
+        return std::unexpected(map_winhttp_error(GetLastError()));
+    }
+    return static_cast<std::uint16_t>(status);
+}
+
+inline auto query_raw_headers(HINTERNET request)
+    -> std::expected<std::wstring, cppx::http::http_error>
+{
+    auto size = DWORD{0};
+    if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_RAW_HEADERS_CRLF,
+                             WINHTTP_HEADER_NAME_BY_INDEX,
+                             WINHTTP_NO_OUTPUT_BUFFER, &size,
+                             WINHTTP_NO_HEADER_INDEX)) {
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+            return std::unexpected(map_winhttp_error(GetLastError()));
+    }
+
+    auto wide_count = static_cast<std::size_t>(size / sizeof(wchar_t));
+    auto raw = std::wstring(wide_count, L'\0');
+    if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_RAW_HEADERS_CRLF,
+                             WINHTTP_HEADER_NAME_BY_INDEX,
+                             raw.data(), &size,
+                             WINHTTP_NO_HEADER_INDEX)) {
+        return std::unexpected(map_winhttp_error(GetLastError()));
+    }
+    if (!raw.empty() && raw.back() == L'\0')
+        raw.pop_back();
+    return raw;
+}
+
+inline auto append_headers_from_raw(std::wstring_view raw,
+                                    cppx::http::headers& hdrs)
+    -> std::expected<void, cppx::http::http_error>
+{
+    auto raw_utf8 = wide_to_utf8(raw);
+    if (!raw_utf8) return std::unexpected(raw_utf8.error());
+
+    auto block = std::string_view{*raw_utf8};
+    auto first_eol = block.find("\r\n");
+    if (first_eol == std::string_view::npos)
+        return {};
+    block.remove_prefix(first_eol + 2);
+
+    while (!block.empty()) {
+        auto eol = block.find("\r\n");
+        if (eol == std::string_view::npos)
+            break;
+        auto line = block.substr(0, eol);
+        block.remove_prefix(eol + 2);
+        if (line.empty())
+            break;
+
+        auto colon = line.find(':');
+        if (colon == std::string_view::npos)
+            return std::unexpected(cppx::http::http_error::response_parse_failed);
+        auto key = line.substr(0, colon);
+        auto value = line.substr(colon + 1);
+        while (!value.empty() && value.front() == ' ')
+            value.remove_prefix(1);
+        hdrs.append(key, value);
+    }
+    return {};
+}
+
+inline auto add_request_headers(HINTERNET request,
+                                cppx::http::headers const& extra)
+    -> std::expected<void, cppx::http::http_error>
+{
+    for (auto const& [name, value] : extra) {
+        auto line_utf8 = std::format("{}: {}", name, value);
+        auto line = utf8_to_wide(line_utf8);
+        if (!line) return std::unexpected(line.error());
+        if (!WinHttpAddRequestHeaders(request, line->c_str(),
+                                      static_cast<DWORD>(line->size()),
+                                      WINHTTP_ADDREQ_FLAG_ADD)) {
+            return std::unexpected(map_winhttp_error(GetLastError()));
+        }
+    }
+    return {};
+}
+
+inline auto configure_request(HINTERNET request)
+    -> std::expected<void, cppx::http::http_error>
+{
+    auto redirect_limit = winhttp_redirect_limit;
+    if (!WinHttpSetOption(request, WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS,
+                          &redirect_limit, sizeof(redirect_limit))) {
+        return std::unexpected(map_winhttp_error(GetLastError()));
+    }
+
+    auto redirect_policy = WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP;
+    if (!WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY,
+                          &redirect_policy, sizeof(redirect_policy))) {
+        return std::unexpected(map_winhttp_error(GetLastError()));
+    }
+
+    auto header_limit =
+        static_cast<DWORD>(cppx::http::default_response_header_limit);
+    if (!WinHttpSetOption(request, WINHTTP_OPTION_MAX_RESPONSE_HEADER_SIZE,
+                          &header_limit, sizeof(header_limit))) {
+        return std::unexpected(map_winhttp_error(GetLastError()));
+    }
+
+    return {};
+}
+
+inline auto send_and_receive(HINTERNET request)
+    -> std::expected<void, cppx::http::http_error>
+{
+    for (auto attempts = 0; attempts < 8; ++attempts) {
+        if (!WinHttpSendRequest(request,
+                                WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {
+            auto err = GetLastError();
+            if (err == ERROR_WINHTTP_RESEND_REQUEST)
+                continue;
+            return std::unexpected(map_winhttp_error(err));
+        }
+        if (!WinHttpReceiveResponse(request, nullptr)) {
+            auto err = GetLastError();
+            if (err == ERROR_WINHTTP_RESEND_REQUEST)
+                continue;
+            return std::unexpected(map_winhttp_error(err));
+        }
+        return {};
+    }
+    return std::unexpected(cppx::http::http_error::redirect_limit);
+}
+
+inline auto make_response_metadata(HINTERNET request)
+    -> std::expected<cppx::http::response, cppx::http::http_error>
+{
+    auto code = query_status_code(request);
+    if (!code) return std::unexpected(code.error());
+
+    auto raw_headers = query_raw_headers(request);
+    if (!raw_headers) return std::unexpected(raw_headers.error());
+
+    auto resp = cppx::http::response{};
+    resp.stat = cppx::http::status{*code};
+    auto parsed = append_headers_from_raw(*raw_headers, resp.hdrs);
+    if (!parsed) return std::unexpected(parsed.error());
+    return resp;
+}
+
+inline auto build_request_context(cppx::http::url const& target,
+                                  cppx::http::headers const& extra)
+    -> std::expected<winhttp_request_context, cppx::http::http_error>
+{
+    auto session = winhttp_handle{
+        WinHttpOpen(L"cppx.http.system/1.0",
+                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                    WINHTTP_NO_PROXY_NAME,
+                    WINHTTP_NO_PROXY_BYPASS, 0)
+    };
+    if (!session)
+        return std::unexpected(map_winhttp_error(GetLastError()));
+
+    auto host = utf8_to_wide(target.host);
+    if (!host) return std::unexpected(host.error());
+    auto connection = winhttp_handle{
+        WinHttpConnect(session.get(), host->c_str(), target.effective_port(), 0)
+    };
+    if (!connection)
+        return std::unexpected(map_winhttp_error(GetLastError()));
+
+    auto path = utf8_to_wide(build_target_path(target));
+    if (!path) return std::unexpected(path.error());
+    auto request = winhttp_handle{
+        WinHttpOpenRequest(connection.get(), L"GET", path->c_str(),
+                           nullptr, WINHTTP_NO_REFERER,
+                           WINHTTP_DEFAULT_ACCEPT_TYPES,
+                           target.is_tls() ? WINHTTP_FLAG_SECURE : 0)
+    };
+    if (!request)
+        return std::unexpected(map_winhttp_error(GetLastError()));
+
+    auto configured = configure_request(request.get());
+    if (!configured) return std::unexpected(configured.error());
+
+    auto added = add_request_headers(request.get(), extra);
+    if (!added) return std::unexpected(added.error());
+
+    return winhttp_request_context{
+        .session = std::move(session),
+        .connection = std::move(connection),
+        .request = std::move(request),
+    };
+}
+
+inline auto read_body(HINTERNET request,
+                      std::vector<std::byte>& body,
+                      std::size_t max_body)
+    -> std::expected<void, cppx::http::http_error>
+{
+    auto buf = std::array<std::byte, 8192>{};
+    auto total = std::size_t{0};
+    for (;;) {
+        auto read = DWORD{0};
+        if (!WinHttpReadData(request, buf.data(),
+                             static_cast<DWORD>(buf.size()), &read)) {
+            return std::unexpected(map_winhttp_error(GetLastError()));
+        }
+        if (read == 0)
+            return {};
+        if (total + read > max_body)
+            return std::unexpected(cppx::http::http_error::body_too_large);
+        body.insert(body.end(), buf.begin(), buf.begin() + read);
+        total += read;
+    }
+}
+
+inline auto finalize_download(std::filesystem::path const& temp_path,
+                              std::filesystem::path const& final_path)
+    -> std::expected<void, cppx::http::http_error>
+{
+    auto ec = std::error_code{};
+    std::filesystem::remove(final_path, ec);
+    std::filesystem::rename(temp_path, final_path, ec);
+    if (ec)
+        return std::unexpected(cppx::http::http_error::send_failed);
+    return {};
+}
+
+inline auto stream_body_to_file(HINTERNET request,
+                                std::filesystem::path const& path,
+                                std::size_t max_body)
+    -> std::expected<void, cppx::http::http_error>
+{
+    auto temp_path = path;
+    temp_path += ".part";
+    auto ec = std::error_code{};
+    std::filesystem::remove(temp_path, ec);
+
+    auto out = std::ofstream{temp_path, std::ios::binary | std::ios::trunc};
+    if (!out)
+        return std::unexpected(cppx::http::http_error::send_failed);
+
+    auto cleanup = [&] {
+        out.close();
+        auto remove_ec = std::error_code{};
+        std::filesystem::remove(temp_path, remove_ec);
+    };
+
+    auto buf = std::array<std::byte, 8192>{};
+    auto total = std::size_t{0};
+    for (;;) {
+        auto read = DWORD{0};
+        if (!WinHttpReadData(request, buf.data(),
+                             static_cast<DWORD>(buf.size()), &read)) {
+            cleanup();
+            return std::unexpected(map_winhttp_error(GetLastError()));
+        }
+        if (read == 0)
+            break;
+        if (total + read > max_body) {
+            cleanup();
+            return std::unexpected(cppx::http::http_error::body_too_large);
+        }
+        out.write(reinterpret_cast<char const*>(buf.data()),
+                  static_cast<std::streamsize>(read));
+        if (!out) {
+            cleanup();
+            return std::unexpected(cppx::http::http_error::send_failed);
+        }
+        total += read;
+    }
+
+    out.close();
+    if (!out) {
+        cleanup();
+        return std::unexpected(cppx::http::http_error::send_failed);
+    }
+
+    auto finalized = finalize_download(temp_path, path);
+    if (!finalized) {
+        cleanup();
+        return std::unexpected(finalized.error());
+    }
+    return {};
+}
+
+} // namespace detail
+#endif // _WIN32
+
+// Preferred system HTTP facade. Platform-specific HTTP/TLS details stay
+// behind this interface so first-party callers do not assemble transports.
+class client {
+public:
+    auto get(std::string_view url, cppx::http::headers extra = {})
+        -> std::expected<cppx::http::response, cppx::http::http_error>
+    {
+#if defined(_WIN32)
+        auto target = cppx::http::url::parse(url);
+        if (!target)
+            return std::unexpected(cppx::http::http_error::url_parse_failed);
+        auto ctx = detail::build_request_context(*target, extra);
+        if (!ctx) return std::unexpected(ctx.error());
+        auto sent = detail::send_and_receive(ctx->request.get());
+        if (!sent) return std::unexpected(sent.error());
+        auto resp = detail::make_response_metadata(ctx->request.get());
+        if (!resp) return std::unexpected(resp.error());
+        auto read = detail::read_body(ctx->request.get(), resp->body,
+                                      detail::default_get_body_limit);
+        if (!read) return std::unexpected(read.error());
+        return resp;
+#else
+        return cppx::http::client<stream, tls>{}.get(url, std::move(extra));
+#endif
+    }
+
+    auto download_to(std::string_view url,
+                     std::filesystem::path const& path,
+                     cppx::http::headers extra = {},
+                     std::size_t max_body = cppx::http::default_download_body_limit)
+        -> std::expected<cppx::http::response, cppx::http::http_error>
+    {
+#if defined(_WIN32)
+        auto target = cppx::http::url::parse(url);
+        if (!target)
+            return std::unexpected(cppx::http::http_error::url_parse_failed);
+        auto ctx = detail::build_request_context(*target, extra);
+        if (!ctx) return std::unexpected(ctx.error());
+        auto sent = detail::send_and_receive(ctx->request.get());
+        if (!sent) return std::unexpected(sent.error());
+        auto resp = detail::make_response_metadata(ctx->request.get());
+        if (!resp) return std::unexpected(resp.error());
+        if (!resp->stat.ok())
+            return resp;
+        auto streamed = detail::stream_body_to_file(ctx->request.get(),
+                                                    path, max_body);
+        if (!streamed) return std::unexpected(streamed.error());
+        resp->body.clear();
+        return resp;
+#else
+        return cppx::http::client<stream, tls>{}.download_to(
+            url, path, std::move(extra), max_body);
+#endif
+    }
+};
+
+// Convenience: HTTPS-capable GET using the preferred system HTTP facade.
 // Follows redirects automatically.
 inline auto get(std::string_view url)
     -> std::expected<cppx::http::response, cppx::http::http_error> {
-    return cppx::http::client<stream, tls>{}.get(url);
+    return client{}.get(url);
 }
 
 inline auto get(std::string_view url, cppx::http::headers extra)
     -> std::expected<cppx::http::response, cppx::http::http_error> {
-    return cppx::http::client<stream, tls>{}.get(url, std::move(extra));
+    return client{}.get(url, std::move(extra));
 }
 
 // Convenience: download URL body to a file path.
 // Follows redirects and streams to disk without a default body cap.
 inline auto download(std::string_view url, std::filesystem::path const& path)
     -> std::expected<void, cppx::http::http_error> {
-    auto resp = cppx::http::client<stream, tls>{}.download_to(url, path);
+    auto resp = client{}.download_to(url, path);
     if (!resp) return std::unexpected(resp.error());
     if (!resp->stat.ok())
         return std::unexpected(cppx::http::http_error::response_parse_failed);
@@ -992,8 +1459,7 @@ inline auto download(std::string_view url, std::filesystem::path const& path)
 inline auto download(std::string_view url, std::filesystem::path const& path,
                      cppx::http::headers extra)
     -> std::expected<void, cppx::http::http_error> {
-    auto resp = cppx::http::client<stream, tls>{}.download_to(
-        url, path, std::move(extra));
+    auto resp = client{}.download_to(url, path, std::move(extra));
     if (!resp) return std::unexpected(resp.error());
     if (!resp->stat.ok())
         return std::unexpected(cppx::http::http_error::response_parse_failed);
