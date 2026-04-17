@@ -297,7 +297,9 @@ auto do_download_exchange(S& stream, request const& req,
     if (head->content_length > 0) {
         while (total_written < head->content_length) {
             if (buf.empty()) {
-                auto n = stream.recv(scratch);
+                auto remain = head->content_length - total_written;
+                auto next = std::min(remain, scratch.size());
+                auto n = stream.recv(std::span<std::byte>{scratch}.first(next));
                 if (!n) {
                     cleanup();
                     return std::unexpected(http_error::response_parse_failed);
@@ -307,13 +309,13 @@ auto do_download_exchange(S& stream, request const& req,
             }
 
             auto remain = head->content_length - total_written;
-            auto n = std::min(remain, buf.size());
-            auto wr = write_chunk(std::string_view{buf}.substr(0, n));
+            auto chunk = std::min(remain, buf.size());
+            auto wr = write_chunk(std::string_view{buf}.substr(0, chunk));
             if (!wr) {
                 cleanup();
                 return std::unexpected(wr.error());
             }
-            buf.erase(0, n);
+            buf.erase(0, chunk);
         }
 
         auto fin = finalize_download(out, temp_path, path);
