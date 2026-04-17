@@ -66,9 +66,13 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.server.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.os.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.os.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.test.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.unicode.cppm
 )
 
 add_library(cppx ALIAS cppx-modules)
@@ -84,11 +88,15 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.server.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.os.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.os.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.test.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.unicode.cppm
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.1.0\""
+    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.2.0\""
 )
 
 if(PROJECT_IS_TOP_LEVEL)
@@ -322,6 +330,54 @@ if(PROJECT_IS_TOP_LEVEL)
 endif()
 exon_copy_windows_asan_runtime(test-http_system)
 
+add_executable(test-os)
+target_sources(test-os PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/os.cpp
+)
+target_link_libraries(test-os PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    target_compile_options(test-os PRIVATE
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer
+    )
+
+    target_link_options(test-os PRIVATE
+        -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
+endif()
+exon_copy_windows_asan_runtime(test-os)
+
+add_executable(test-os_system)
+target_sources(test-os_system PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/os_system.cpp
+)
+target_link_libraries(test-os_system PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    target_compile_options(test-os_system PRIVATE
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer
+    )
+
+    target_link_options(test-os_system PRIVATE
+        -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
+endif()
+exon_copy_windows_asan_runtime(test-os_system)
+
 add_executable(test-platform)
 target_sources(test-platform PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/platform.cpp
@@ -369,3 +425,51 @@ if(PROJECT_IS_TOP_LEVEL)
     )
 endif()
 exon_copy_windows_asan_runtime(test-reflect)
+
+add_executable(test-resource)
+target_sources(test-resource PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/resource.cpp
+)
+target_link_libraries(test-resource PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    target_compile_options(test-resource PRIVATE
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer
+    )
+
+    target_link_options(test-resource PRIVATE
+        -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
+endif()
+exon_copy_windows_asan_runtime(test-resource)
+
+add_executable(test-unicode)
+target_sources(test-unicode PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unicode.cpp
+)
+target_link_libraries(test-unicode PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    target_compile_options(test-unicode PRIVATE
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer
+    )
+
+    target_link_options(test-unicode PRIVATE
+        -fsanitize=address,undefined
+        -framework
+        Security
+        -Wl,-framework,CoreFoundation
+    )
+endif()
+exon_copy_windows_asan_runtime(test-unicode)

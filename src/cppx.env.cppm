@@ -7,6 +7,27 @@
 export module cppx.env;
 import std;
 
+namespace cppx::env::detail {
+
+inline auto trim_ascii(std::string_view value) -> std::string_view {
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+        value.remove_prefix(1);
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+        value.remove_suffix(1);
+    return value;
+}
+
+inline auto ascii_lower(std::string_view value) -> std::string {
+    auto lowered = std::string{};
+    lowered.reserve(value.size());
+    for (auto ch : value)
+        lowered.push_back(static_cast<char>(
+            std::tolower(static_cast<unsigned char>(ch))));
+    return lowered;
+}
+
+} // namespace cppx::env::detail
+
 export namespace cppx::env {
 
 // ---- constants -----------------------------------------------------------
@@ -41,6 +62,10 @@ enum class find_error {
     not_found_on_PATH,  // $PATH is set but `name` not found
 };
 
+enum class bool_parse_error {
+    invalid_value,
+};
+
 // ---- pure functions ------------------------------------------------------
 
 // Symmetric one-line forwarder so callers can route every env read
@@ -48,6 +73,34 @@ enum class find_error {
 template <env_source E>
 std::optional<std::string> get(E const& env, std::string_view name) {
     return env.get(name);
+}
+
+inline std::expected<bool, bool_parse_error> parse_bool(std::string_view value) {
+    auto const normalized = detail::ascii_lower(detail::trim_ascii(value));
+    if (normalized == "1" || normalized == "true" || normalized == "yes"
+        || normalized == "on" || normalized == "y" || normalized == "t")
+        return true;
+    if (normalized == "0" || normalized == "false" || normalized == "no"
+        || normalized == "off" || normalized == "n" || normalized == "f")
+        return false;
+    return std::unexpected{bool_parse_error::invalid_value};
+}
+
+template <env_source E>
+std::optional<bool> get_bool(E const& env, std::string_view name) {
+    auto value = get(env, name);
+    if (!value)
+        return std::nullopt;
+    auto parsed = parse_bool(*value);
+    if (!parsed)
+        return std::nullopt;
+    return *parsed;
+}
+
+template <env_source E>
+bool get_bool_or(E const& env, std::string_view name, bool default_value) {
+    auto value = get_bool(env, name);
+    return value.value_or(default_value);
 }
 
 // Returns the user's home directory. Checks $HOME first, falls back
