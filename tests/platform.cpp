@@ -71,11 +71,61 @@ void test_matches() {
     tc.check(!host.matches(different), "different os does not match");
 }
 
+void test_parse_os_and_arch() {
+    tc.check(cppx::platform::parse_os("linux") == OS::Linux, "parse_os linux");
+    tc.check(cppx::platform::parse_os("MACOS") == OS::MacOS, "parse_os macos");
+    tc.check(cppx::platform::parse_os("unknown-os") == OS::Unknown, "parse_os unknown");
+
+    tc.check(cppx::platform::parse_arch("x86_64") == Arch::X86_64, "parse_arch x86_64");
+    tc.check(cppx::platform::parse_arch("AARCH64") == Arch::AArch64, "parse_arch aarch64");
+    tc.check(cppx::platform::parse_arch("sparc") == Arch::Unknown, "parse_arch unknown");
+}
+
+void test_parse_platform() {
+    auto linux_platform = cppx::platform::parse_platform("linux-x86_64");
+    tc.check(linux_platform.os == OS::Linux && linux_platform.arch == Arch::X86_64,
+             "parse_platform canonical short form");
+
+    auto partial_os = cppx::platform::parse_platform("linux");
+    tc.check(partial_os.os == OS::Linux && partial_os.arch == Arch::Unknown,
+             "parse_platform os-only");
+
+    auto partial_arch = cppx::platform::parse_platform("aarch64");
+    tc.check(partial_arch.os == OS::Unknown && partial_arch.arch == Arch::AArch64,
+             "parse_platform arch-only");
+
+    auto roundtrip = cppx::platform::parse_platform(
+        Platform{OS::MacOS, Arch::AArch64}.to_string());
+    tc.check(roundtrip.os == OS::MacOS && roundtrip.arch == Arch::AArch64,
+             "parse_platform roundtrip");
+}
+
+void test_target_triple_helper() {
+    auto wasi = cppx::platform::platform_from_target_triple("wasm32-wasi");
+    tc.check(wasi.has_value()
+                 && wasi->os == OS::WASI
+                 && wasi->arch == Arch::Wasm32,
+             "platform_from_target_triple supports wasm32-wasi");
+
+    auto linux_target = cppx::platform::platform_from_target_triple("linux-x86_64");
+    tc.check(linux_target.has_value()
+                 && linux_target->os == OS::Linux
+                 && linux_target->arch == Arch::X86_64,
+             "platform_from_target_triple supports short form");
+
+    auto invalid = cppx::platform::platform_from_target_triple("linux");
+    tc.check(!invalid.has_value(),
+             "platform_from_target_triple rejects partial platform");
+}
+
 int main() {
     test_host();
     test_os_name();
     test_arch_name();
     test_to_string();
     test_matches();
+    test_parse_os_and_arch();
+    test_parse_platform();
+    test_target_triple_helper();
     return tc.summary("cppx.platform");
 }
