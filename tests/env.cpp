@@ -135,6 +135,52 @@ void test_shell_quote() {
           "shell_quote with tab");
 }
 
+void test_parse_bool() {
+    auto yes = cppx::env::parse_bool("YES");
+    tc.check(yes.has_value() && *yes, "parse_bool YES");
+
+    auto off = cppx::env::parse_bool("  off  ");
+    tc.check(off.has_value() && !*off, "parse_bool trims whitespace");
+
+    auto invalid = cppx::env::parse_bool("maybe");
+    tc.check(!invalid
+                  && invalid.error() == cppx::env::bool_parse_error::invalid_value,
+              "parse_bool rejects invalid token");
+}
+
+void test_get_bool() {
+    auto const env = fake_env{{
+        {"ENABLED", "true"},
+        {"DISABLED", "0"},
+        {"INVALID", "later"},
+    }};
+
+    auto enabled = cppx::env::get_bool(env, "ENABLED");
+    tc.check(enabled.has_value() && *enabled, "get_bool true");
+
+    auto disabled = cppx::env::get_bool(env, "DISABLED");
+    tc.check(disabled.has_value() && !*disabled, "get_bool false");
+
+    tc.check(!cppx::env::get_bool(env, "INVALID").has_value(),
+             "get_bool invalid token → nullopt");
+    tc.check(!cppx::env::get_bool(env, "MISSING").has_value(),
+             "get_bool missing → nullopt");
+}
+
+void test_get_bool_or() {
+    auto const env = fake_env{{
+        {"ENABLED", "on"},
+        {"INVALID", "later"},
+    }};
+
+    tc.check(cppx::env::get_bool_or(env, "ENABLED", false),
+             "get_bool_or returns parsed value");
+    tc.check(!cppx::env::get_bool_or(env, "INVALID", false),
+             "get_bool_or falls back for invalid token");
+    tc.check(cppx::env::get_bool_or(env, "MISSING", true),
+             "get_bool_or falls back for missing token");
+}
+
 int main() {
     test_constants();
     test_get();
@@ -144,5 +190,8 @@ int main() {
     test_find_in_path_first_match();
     test_find_in_path_skips_empty_segments();
     test_shell_quote();
+    test_parse_bool();
+    test_get_bool();
+    test_get_bool_or();
     return tc.summary("cppx.env");
 }

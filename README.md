@@ -27,6 +27,10 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.platform` | Compile-time host detection: `OS`, `Arch`, `Platform`, `host()`. |
 | `cppx.env` | Pure environment/path helpers such as `get`, `home_dir`, `find_in_path`, `shell_quote`. |
 | `cppx.env.system` | System-backed environment/filesystem adapters for `cppx.env`. |
+| `cppx.resource` | Pure resource classification and path-resolution helpers for filesystem paths and URLs. |
+| `cppx.unicode` | Pure UTF-8/UTF-16/wide-string conversion helpers for platform boundaries. |
+| `cppx.os` | OS-facing capability declarations such as `open_error`. |
+| `cppx.os.system` | System-backed OS helpers such as `open_url`. |
 | `cppx.async` | Coroutine primitives: `task<T>`, `generator<T>`, `executor_engine`, `run`, `async_scope`, `when_all`. |
 | `cppx.async.system` | System event-loop executor and networking helpers for async I/O. |
 | `cppx.async.test` | Deterministic coroutine test executor with virtual time. |
@@ -98,6 +102,23 @@ int main() {
 `cppx::http::system::get`, `download`, and `system::client` are the
 preferred first-party HTTP entrypoints. Platform transport details stay
 behind that facade, including WinHTTP-backed requests on Windows.
+
+### URL opening
+
+```cpp
+import cppx.os;
+import cppx.os.system;
+import std;
+
+int main() {
+    auto opened = cppx::os::system::open_url("https://example.com");
+    if (!opened) {
+        std::println(std::cerr, "error: {}",
+                     cppx::os::to_string(opened.error()));
+        return 1;
+    }
+}
+```
 
 ### HTTP server
 
@@ -174,8 +195,10 @@ Current tests cover:
 - reflection field count, field access, and field names
 - platform detection and wildcard matching
 - pure env helpers and system-backed env lookup
+- resource classification and Unicode boundary conversions
 - coroutine tasks, generators, scopes, and deterministic virtual-time testing
 - HTTP URL parsing, headers, serialization, incremental parsing, client behavior, server routing, static serving, and system networking paths
+- OS URL-opening error paths
 
 ## Repository
 

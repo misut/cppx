@@ -1,4 +1,4 @@
-// The only impure submodule in cppx. Wraps std::getenv and
+// System-backed adapters for cppx.env. Wraps std::getenv and
 // std::filesystem so cppx.env can stay pure. Importing this module
 // is the audit signal for "this translation unit reads real OS
 // state" — grep for `import cppx.env.system` to find every
@@ -43,6 +43,19 @@ inline std::optional<std::string> get(std::string_view name) {
 
 inline std::optional<std::filesystem::path> home_dir() {
     return cppx::env::home_dir(system_env{});
+}
+
+inline std::expected<bool, cppx::env::bool_parse_error>
+parse_bool(std::string_view value) {
+    return cppx::env::parse_bool(value);
+}
+
+inline std::optional<bool> get_bool(std::string_view name) {
+    return cppx::env::get_bool(system_env{}, name);
+}
+
+inline bool get_bool_or(std::string_view name, bool default_value) {
+    return cppx::env::get_bool_or(system_env{}, name, default_value);
 }
 
 inline std::expected<std::filesystem::path, cppx::env::find_error>
