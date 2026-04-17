@@ -3,7 +3,6 @@
 // HTTP client, verify the response.
 
 import cppx.http;
-import cppx.http.client;
 import cppx.http.server;
 import cppx.http.system;
 import cppx.test;
@@ -46,10 +45,8 @@ void test_route_handler() {
 
     ready_fut.wait();
 
-    using client_t = cppx::http::client<cppx::http::system::stream,
-                                        cppx::http::system::tls>;
     auto url = std::format("http://127.0.0.1:{}/api/health", port);
-    auto resp = client_t{}.get(url);
+    auto resp = cppx::http::system::get(url);
 
     tc.check(resp.has_value(), "client GET succeeds");
     if (resp) {
@@ -123,12 +120,9 @@ void test_static_file_serving() {
 
     ready_fut.wait();
 
-    using client_t = cppx::http::client<cppx::http::system::stream,
-                                        cppx::http::system::tls>;
-
     // Request 1: /hello.txt
     auto url1 = std::format("http://127.0.0.1:{}/hello.txt", port);
-    auto r1 = client_t{}.get(url1);
+    auto r1 = cppx::http::system::get(url1);
     tc.check(r1.has_value(), "GET /hello.txt succeeds");
     if (r1) {
         tc.check(r1->stat.code == 200, "hello.txt 200");
@@ -139,7 +133,7 @@ void test_static_file_serving() {
 
     // Request 2: / (should map to index.html)
     auto url2 = std::format("http://127.0.0.1:{}/", port);
-    auto r2 = client_t{}.get(url2);
+    auto r2 = cppx::http::system::get(url2);
     tc.check(r2.has_value(), "GET / succeeds");
     if (r2) {
         tc.check(r2->stat.code == 200, "index.html 200");

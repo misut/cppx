@@ -95,6 +95,10 @@ int main() {
 }
 ```
 
+`cppx::http::system::get`, `download`, and `system::client` are the
+preferred first-party HTTP entrypoints. Platform transport details stay
+behind that facade, including WinHTTP-backed requests on Windows.
+
 ### HTTP server
 
 ```cpp
