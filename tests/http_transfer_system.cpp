@@ -61,20 +61,70 @@ void test_get_text_does_not_fallback_on_http_404() {
 }
 
 void test_get_text_attempts_shell_fallback_on_connection_failure() {
+    auto started_at = std::chrono::steady_clock::now();
     auto result = cppx::http::transfer::system::get_text(
         "http://127.0.0.1:1/unreachable",
-        {.backend = cppx::http::transfer::TransferBackend::Auto});
+        {
+            .backend = cppx::http::transfer::TransferBackend::Auto,
+            .shell_timeout = std::chrono::milliseconds{500},
+        });
+    auto elapsed = std::chrono::steady_clock::now() - started_at;
 
     tc.check(!result, "connection failure surfaces as error");
-    if (!result)
+    if (result)
         return;
 
+    tc.check(elapsed < std::chrono::seconds{5},
+             "connection failure fallback stays bounded");
     tc.check(result.error().backend == cppx::http::transfer::TransferBackend::Shell,
              "connection failure reaches shell backend");
     tc.check(result.error().http_error == cppx::http::http_error::connection_failed,
              "primary connection failure preserved");
     tc.check(result.error().message.contains("connection_failed"),
              "combined diagnostics mention primary backend failure");
+}
+
+void test_shell_backend_timeout_surfaces_without_hanging() {
+    auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
+    tc.check(listener.has_value(), "timeout listener bind succeeds");
+    if (!listener)
+        return;
+
+    auto release = std::atomic<bool>{false};
+    auto server = std::thread{[&] {
+        auto conn = listener->accept();
+        if (!conn)
+            return;
+        while (!release.load(std::memory_order_acquire))
+            std::this_thread::sleep_for(std::chrono::milliseconds{10});
+        conn->close();
+    }};
+
+    auto started_at = std::chrono::steady_clock::now();
+    auto result = cppx::http::transfer::system::get_text(
+        std::format("http://127.0.0.1:{}/stall", listener->local_port()),
+        {
+            .backend = cppx::http::transfer::TransferBackend::Shell,
+            .shell_timeout = std::chrono::milliseconds{200},
+        });
+    auto elapsed = std::chrono::steady_clock::now() - started_at;
+
+    release.store(true, std::memory_order_release);
+    listener->close();
+    server.join();
+
+    tc.check(!result, "shell timeout surfaces as error");
+    if (result)
+        return;
+
+    tc.check(elapsed < std::chrono::seconds{5},
+             "shell timeout returns in bounded time");
+    tc.check(result.error().backend == cppx::http::transfer::TransferBackend::Shell,
+             "timeout error stays on shell backend");
+    tc.check(result.error().code == cppx::http::transfer::transfer_error_code::shell_failed,
+             "timeout maps to shell_failed");
+    tc.check(result.error().message.contains("timed out"),
+             "timeout diagnostics mention timeout");
 }
 
 void test_download_file_uses_cppx_http_without_fallback_on_http_404() {
@@ -117,6 +167,7 @@ void test_download_file_uses_cppx_http_without_fallback_on_http_404() {
 int main() {
     test_get_text_does_not_fallback_on_http_404();
     test_get_text_attempts_shell_fallback_on_connection_failure();
+    test_shell_backend_timeout_surfaces_without_hanging();
     test_download_file_uses_cppx_http_without_fallback_on_http_404();
     return tc.summary("cppx.http.transfer.system");
 }

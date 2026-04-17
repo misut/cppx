@@ -108,9 +108,12 @@ inline auto http_status_failure(std::uint16_t status_code)
 }
 
 inline auto run_shell(cppx::process::ProcessSpec spec,
+                      cppx::http::transfer::TransferOptions const& options,
                       std::string_view unavailable_message,
                       std::string_view operation)
     -> std::expected<cppx::process::CapturedProcessResult, cppx::http::transfer::TransferError> {
+    spec.timeout = options.shell_timeout;
+    auto const timeout = spec.timeout;
     auto result = cppx::process::system::capture(std::move(spec));
     if (!result) {
         auto code = result.error() == cppx::process::process_error::spawn_failed
@@ -126,7 +129,18 @@ inline auto run_shell(cppx::process::ProcessSpec spec,
                       operation,
                       cppx::process::to_string(result.error())));
     }
-    if (result->timed_out || result->exit_code != 0) {
+    if (result->timed_out) {
+        return make_error(
+            cppx::http::transfer::transfer_error_code::shell_failed,
+            cppx::http::transfer::TransferBackend::Shell,
+            timeout
+                ? std::format(
+                      "{} failed: shell backend timed out after {}ms",
+                      operation,
+                      timeout->count())
+                : std::format("{} failed: shell backend timed out", operation));
+    }
+    if (result->exit_code != 0) {
         auto stderr_text = trim_line_endings(result->stderr_text);
         return make_error(
             cppx::http::transfer::transfer_error_code::shell_failed,
@@ -170,6 +184,7 @@ inline auto shell_text(cppx::http::transfer::TransferOptions const& options,
                 script,
             },
         },
+        options,
         "request failed: shell backend unavailable (powershell not found)",
         "request");
     if (!result)
@@ -222,6 +237,7 @@ inline auto shell_download(cppx::http::transfer::TransferOptions const& options,
                 script,
             },
         },
+        options,
         "download failed: shell backend unavailable (powershell not found)",
         "download");
     if (!result) {
@@ -259,6 +275,7 @@ inline auto shell_text(cppx::http::transfer::TransferOptions const& options,
 
     auto captured = run_shell(
         std::move(spec),
+        options,
         "request failed: shell backend unavailable (curl not found)",
         "request");
     if (!captured)
@@ -296,6 +313,7 @@ inline auto shell_download(cppx::http::transfer::TransferOptions const& options,
 
     auto captured = run_shell(
         std::move(spec),
+        options,
         "download failed: shell backend unavailable (curl not found)",
         "download");
     if (!captured) {
