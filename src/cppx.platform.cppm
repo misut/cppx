@@ -6,6 +6,26 @@ import std;
 
 export namespace cppx::platform {
 
+namespace detail {
+
+constexpr auto ascii_lower(char ch) noexcept -> char {
+    return (ch >= 'A' && ch <= 'Z')
+        ? static_cast<char>(ch - 'A' + 'a')
+        : ch;
+}
+
+inline auto normalize_token(std::string_view value) -> std::string {
+    auto out = std::string{};
+    out.reserve(value.size());
+    for (char ch : value) {
+        if (!std::isspace(static_cast<unsigned char>(ch)))
+            out.push_back(ascii_lower(ch));
+    }
+    return out;
+}
+
+} // namespace detail
+
 enum class OS {
     Unknown,
     Linux,
@@ -93,6 +113,70 @@ consteval Platform host() noexcept {
 #endif
 
     return p;
+}
+
+inline auto parse_os(std::string_view value) -> OS {
+    auto const token = detail::normalize_token(value);
+    if (token == "linux")
+        return OS::Linux;
+    if (token == "macos")
+        return OS::MacOS;
+    if (token == "windows")
+        return OS::Windows;
+    if (token == "wasi")
+        return OS::WASI;
+    return OS::Unknown;
+}
+
+inline auto parse_arch(std::string_view value) -> Arch {
+    auto const token = detail::normalize_token(value);
+    if (token == "x86_64")
+        return Arch::X86_64;
+    if (token == "aarch64")
+        return Arch::AArch64;
+    if (token == "wasm32")
+        return Arch::Wasm32;
+    return Arch::Unknown;
+}
+
+inline auto parse_platform(std::string_view value) -> Platform {
+    auto const token = detail::normalize_token(value);
+    if (token.empty() || token == "any")
+        return Platform{OS::Unknown, Arch::Unknown};
+
+    if (auto os = parse_os(token); os != OS::Unknown)
+        return Platform{os, Arch::Unknown};
+    if (auto arch = parse_arch(token); arch != Arch::Unknown)
+        return Platform{OS::Unknown, arch};
+
+    auto const dash = token.find('-');
+    if (dash == std::string::npos)
+        return Platform{OS::Unknown, Arch::Unknown};
+
+    auto const left = std::string_view{token}.substr(0, dash);
+    auto const right = std::string_view{token}.substr(dash + 1);
+
+    auto const os_left = parse_os(left);
+    auto const arch_right = parse_arch(right);
+    if (os_left != OS::Unknown && arch_right != Arch::Unknown) {
+        return Platform{os_left, arch_right};
+    }
+
+    auto const arch_left = parse_arch(left);
+    auto const os_right = parse_os(right);
+    if (os_right != OS::Unknown && arch_left != Arch::Unknown) {
+        return Platform{os_right, arch_left};
+    }
+
+    return Platform{OS::Unknown, Arch::Unknown};
+}
+
+inline auto platform_from_target_triple(std::string_view value)
+    -> std::optional<Platform> {
+    auto const platform = parse_platform(value);
+    if (platform.os == OS::Unknown || platform.arch == Arch::Unknown)
+        return std::nullopt;
+    return platform;
 }
 
 } // namespace cppx::platform
