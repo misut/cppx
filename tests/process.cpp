@@ -26,8 +26,23 @@ void test_process_result_shape() {
     tc.check(result.timed_out, "timed_out stored");
 }
 
+void test_captured_process_result_shape() {
+    cppx::process::CapturedProcessResult result{
+        .exit_code = 9,
+        .timed_out = false,
+        .stdout_text = "stdout",
+        .stderr_text = "stderr",
+    };
+
+    tc.check(result.exit_code == 9, "captured exit code stored");
+    tc.check(!result.timed_out, "captured timed_out stored");
+    tc.check(result.stdout_text == "stdout", "captured stdout stored");
+    tc.check(result.stderr_text == "stderr", "captured stderr stored");
+}
+
 int main() {
     test_process_spec_shape();
     test_process_result_shape();
+    test_captured_process_result_shape();
     return tc.summary("cppx.process");
 }

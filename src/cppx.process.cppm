@@ -46,4 +46,11 @@ struct ProcessResult {
     bool timed_out = false;
 };
 
+struct CapturedProcessResult {
+    int exit_code = 0;
+    bool timed_out = false;
+    std::string stdout_text;
+    std::string stderr_text;
+};
+
 } // namespace cppx::process
