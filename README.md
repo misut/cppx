@@ -44,7 +44,7 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.checksum` | Pure checksum parsing/normalization helpers and error types. |
 | `cppx.checksum.system` | System-backed SHA-256 hashing helpers. |
 | `cppx.async` | Coroutine primitives: `task<T>`, `generator<T>`, `executor_engine`, `run`, `async_scope`, `when_all`. |
-| `cppx.async.system` | System event-loop executor, timer awaitables, and networking helpers for async I/O. |
+| `cppx.async.system` | System event-loop executor, timer awaitables, and networking helpers for async I/O across POSIX and Windows. |
 | `cppx.async.test` | Deterministic coroutine test executor with virtual time. |
 | `cppx.async.system.test` | Scripted in-memory async listener/stream fakes for deterministic system-layer tests. |
 | `cppx.test` | Minimal test helpers for standalone executables. |
@@ -97,6 +97,9 @@ int main() {
 Use `import cppx.async.system.test;` when you want deterministic tests for
 system-facing coroutine code without real sockets. Keep real-I/O validation
 as an opt-in smoke run with `CPPX_RUN_ASYNC_SYSTEM_SMOKE=1`.
+
+`cppx.async.system` now includes a first-party Windows backend, so the same
+module surface stays available across desktop targets.
 
 ### HTTP client
 
@@ -236,7 +239,7 @@ macOS/Linux.
 
 ```toml
 [dependencies]
-"github.com/misut/cppx" = "1.4.0"
+"github.com/misut/cppx" = "1.5.0"
 ```
 
 ### CMake
@@ -245,7 +248,7 @@ macOS/Linux.
 include(FetchContent)
 FetchContent_Declare(cppx
     GIT_REPOSITORY https://github.com/misut/cppx.git
-    GIT_TAG v1.4.0
+    GIT_TAG v1.5.0
     GIT_SHALLOW ON
 )
 FetchContent_MakeAvailable(cppx)
