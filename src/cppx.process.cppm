@@ -1,3 +1,6 @@
+// Process-facing data and error types. Spawning, waiting, and pipe I/O
+// stay in cppx.process.system.
+
 export module cppx.process;
 import std;
 

@@ -1,6 +1,9 @@
+// Transfer facade that keeps backend-selection policy explicit. The
+// public entrypoints stay small while cppx.http access, shell fallback,
+// and file-finalization details live in isolated helpers below.
+
 export module cppx.http.transfer.system;
 import std;
-import cppx.fs.system;
 import cppx.http;
 import cppx.http.system;
 import cppx.http.transfer;
@@ -9,14 +12,21 @@ import cppx.process.system;
 
 namespace cppx::http::transfer::detail {
 
-inline auto make_error(cppx::http::transfer::transfer_error_code code,
-                       cppx::http::transfer::TransferBackend backend,
+using backend_t = cppx::http::transfer::TransferBackend;
+using error_code_t = cppx::http::transfer::transfer_error_code;
+using error_t = cppx::http::transfer::TransferError;
+using text_result_t = cppx::http::transfer::TextResult;
+using transfer_result_t = cppx::http::transfer::TransferResult;
+using options_t = cppx::http::transfer::TransferOptions;
+
+inline auto make_error(error_code_t code,
+                       backend_t backend,
                        std::string message,
                        std::optional<cppx::http::http_error> http_error = std::nullopt,
                        std::optional<std::uint16_t> http_status_code = std::nullopt,
                        bool fallback_allowed = false)
-    -> std::unexpected<cppx::http::transfer::TransferError> {
-    return std::unexpected(cppx::http::transfer::TransferError{
+    -> std::unexpected<error_t> {
+    return std::unexpected(error_t{
         .code = code,
         .backend = backend,
         .message = std::move(message),
@@ -27,7 +37,7 @@ inline auto make_error(cppx::http::transfer::transfer_error_code code,
 }
 
 inline auto ensure_parent_directory(std::filesystem::path const& path)
-    -> std::expected<void, cppx::http::transfer::TransferError> {
+    -> std::expected<void, error_t> {
     auto parent = path.parent_path();
     if (parent.empty())
         return {};
@@ -36,9 +46,12 @@ inline auto ensure_parent_directory(std::filesystem::path const& path)
     std::filesystem::create_directories(parent, ec);
     if (ec) {
         return make_error(
-            cppx::http::transfer::transfer_error_code::read_failed,
-            cppx::http::transfer::TransferBackend::Shell,
-            std::format("could not create directory '{}': {}", parent.string(), ec.message()));
+            error_code_t::read_failed,
+            backend_t::Shell,
+            std::format(
+                "could not create directory '{}': {}",
+                parent.string(),
+                ec.message()));
     }
     return {};
 }
@@ -61,6 +74,97 @@ inline auto trim_line_endings(std::string_view text) -> std::string {
     return trimmed;
 }
 
+inline auto combine_primary_and_fallback(error_t const& primary,
+                                         error_t fallback)
+    -> std::unexpected<error_t> {
+    return make_error(
+        fallback.code,
+        fallback.backend,
+        std::format("{}; {}", primary.message, fallback.message),
+        primary.http_error,
+        primary.http_status_code,
+        false);
+}
+
+namespace cppx_backend {
+
+inline auto http_failure(std::string_view operation, cppx::http::http_error error)
+    -> error_t {
+    return error_t{
+        .code = error_code_t::http_failure,
+        .backend = backend_t::CppxHttp,
+        .message = std::format(
+            "{} failed: {}",
+            operation,
+            cppx::http::to_string(error)),
+        .http_error = error,
+        .fallback_allowed = cppx::http::transfer::should_shell_fallback(error),
+    };
+}
+
+inline auto http_status_failure(std::uint16_t status_code) -> error_t {
+    return error_t{
+        .code = error_code_t::http_failure,
+        .backend = backend_t::CppxHttp,
+        .message = std::format("HTTP {}", status_code),
+        .http_status_code = status_code,
+        .fallback_allowed = false,
+    };
+}
+
+inline auto get_text(options_t const& options, std::string_view url)
+    -> std::expected<text_result_t, error_t> {
+    auto response = cppx::http::system::client{}.get(url, options.headers);
+    if (!response)
+        return std::unexpected(http_failure("request", response.error()));
+    if (!response->stat.ok())
+        return std::unexpected(http_status_failure(response->stat.code));
+    return text_result_t{
+        .backend = backend_t::CppxHttp,
+        .text = response->body_string(),
+    };
+}
+
+inline auto download_file(options_t const& options,
+                          std::string_view url,
+                          std::filesystem::path const& path)
+    -> std::expected<transfer_result_t, error_t> {
+    auto prepared = ensure_parent_directory(path);
+    if (!prepared)
+        return std::unexpected(prepared.error());
+
+    auto last_error = error_t{};
+    for (int attempt = 1; attempt <= 3; ++attempt) {
+        cleanup_download_target(path);
+        auto response = cppx::http::system::client{}.download_to(
+            url,
+            path,
+            options.headers);
+        if (response) {
+            if (!response->stat.ok()) {
+                cleanup_download_target(path);
+                return std::unexpected(http_status_failure(response->stat.code));
+            }
+            return transfer_result_t{
+                .backend = backend_t::CppxHttp,
+            };
+        }
+
+        last_error = http_failure("download", response.error());
+        if (!last_error.fallback_allowed || attempt == 3)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds{250 * attempt});
+    }
+
+    cleanup_download_target(path);
+    return std::unexpected(last_error);
+}
+
+} // namespace cppx_backend
+
+namespace shell_backend {
+
+#if defined(_WIN32)
 inline auto powershell_quote(std::string_view value) -> std::string {
     auto out = std::string{"'"};
     for (auto ch : value) {
@@ -73,55 +177,42 @@ inline auto powershell_quote(std::string_view value) -> std::string {
     return out;
 }
 
-inline auto temp_file_path(std::string_view prefix, std::string_view suffix)
-    -> std::filesystem::path {
-    static auto counter = std::atomic<std::uint64_t>{0};
-    return std::filesystem::temp_directory_path() /
-        std::format(
-            "cppx-transfer-{}-{}-{}{}",
-            prefix,
-            std::chrono::steady_clock::now().time_since_epoch().count(),
-            counter.fetch_add(1, std::memory_order_relaxed),
-            suffix);
+inline auto append_powershell_headers(std::string& script,
+                                      cppx::http::headers const& headers)
+    -> void {
+    for (auto const& [name, value] : headers) {
+        script += std::format(
+            "$headers[{}]={};",
+            powershell_quote(name),
+            powershell_quote(value));
+    }
 }
-
-inline auto http_failure(std::string_view operation, cppx::http::http_error error)
-    -> cppx::http::transfer::TransferError {
-    return cppx::http::transfer::TransferError{
-        .code = cppx::http::transfer::transfer_error_code::http_failure,
-        .backend = cppx::http::transfer::TransferBackend::CppxHttp,
-        .message = std::format("{} failed: {}", operation, cppx::http::to_string(error)),
-        .http_error = error,
-        .fallback_allowed = cppx::http::transfer::should_shell_fallback(error),
-    };
+#else
+inline auto append_curl_headers(cppx::process::ProcessSpec& spec,
+                                cppx::http::headers const& headers)
+    -> void {
+    for (auto const& [name, value] : headers) {
+        spec.args.push_back("-H");
+        spec.args.push_back(std::format("{}: {}", name, value));
+    }
 }
+#endif
 
-inline auto http_status_failure(std::uint16_t status_code)
-    -> cppx::http::transfer::TransferError {
-    return cppx::http::transfer::TransferError{
-        .code = cppx::http::transfer::transfer_error_code::http_failure,
-        .backend = cppx::http::transfer::TransferBackend::CppxHttp,
-        .message = std::format("HTTP {}", status_code),
-        .http_status_code = status_code,
-        .fallback_allowed = false,
-    };
-}
-
-inline auto run_shell(cppx::process::ProcessSpec spec,
-                      cppx::http::transfer::TransferOptions const& options,
-                      std::string_view unavailable_message,
-                      std::string_view operation)
-    -> std::expected<cppx::process::CapturedProcessResult, cppx::http::transfer::TransferError> {
+inline auto run(cppx::process::ProcessSpec spec,
+                options_t const& options,
+                std::string_view unavailable_message,
+                std::string_view operation)
+    -> std::expected<cppx::process::CapturedProcessResult, error_t> {
     spec.timeout = options.shell_timeout;
     auto const timeout = spec.timeout;
     auto result = cppx::process::system::capture(std::move(spec));
     if (!result) {
         auto code = result.error() == cppx::process::process_error::spawn_failed
-            ? cppx::http::transfer::transfer_error_code::shell_unavailable
-            : cppx::http::transfer::transfer_error_code::shell_failed;
+            ? error_code_t::shell_unavailable
+            : error_code_t::shell_failed;
         return make_error(
             code,
-            cppx::http::transfer::TransferBackend::Shell,
+            backend_t::Shell,
             result.error() == cppx::process::process_error::spawn_failed
                 ? std::string{unavailable_message}
                 : std::format(
@@ -131,47 +222,48 @@ inline auto run_shell(cppx::process::ProcessSpec spec,
     }
     if (result->timed_out) {
         return make_error(
-            cppx::http::transfer::transfer_error_code::shell_failed,
-            cppx::http::transfer::TransferBackend::Shell,
+            error_code_t::shell_failed,
+            backend_t::Shell,
             timeout
                 ? std::format(
                       "{} failed: shell backend timed out after {}ms",
                       operation,
                       timeout->count())
-                : std::format("{} failed: shell backend timed out", operation));
+                : std::format(
+                      "{} failed: shell backend timed out",
+                      operation));
     }
     if (result->exit_code != 0) {
         auto stderr_text = trim_line_endings(result->stderr_text);
         return make_error(
-            cppx::http::transfer::transfer_error_code::shell_failed,
-            cppx::http::transfer::TransferBackend::Shell,
+            error_code_t::shell_failed,
+            backend_t::Shell,
             stderr_text.empty()
-                ? std::format("{} failed: shell backend failed", operation)
-                : std::format("{} failed: {}", operation, stderr_text));
+                ? std::format(
+                      "{} failed: shell backend failed",
+                      operation)
+                : std::format(
+                      "{} failed: {}",
+                      operation,
+                      stderr_text));
     }
     return *result;
 }
 
 #if defined(_WIN32)
-inline auto shell_text(cppx::http::transfer::TransferOptions const& options,
-                       std::string_view url)
-    -> std::expected<cppx::http::transfer::TextResult, cppx::http::transfer::TransferError> {
+inline auto get_text(options_t const& options, std::string_view url)
+    -> std::expected<text_result_t, error_t> {
     auto script = std::string{
         "$ErrorActionPreference='Stop';"
         "$ProgressPreference='SilentlyContinue';"
         "$headers=@{};"
     };
-    for (auto const& [name, value] : options.headers) {
-        script += std::format(
-            "$headers[{}]={};",
-            powershell_quote(name),
-            powershell_quote(value));
-    }
+    append_powershell_headers(script, options.headers);
     script += std::format(
         "(Invoke-WebRequest -UseBasicParsing -Uri {} -Headers $headers -MaximumRedirection 10).Content",
         powershell_quote(url));
 
-    auto result = run_shell(
+    auto result = run(
         {
             .program = "powershell",
             .args = {
@@ -190,16 +282,16 @@ inline auto shell_text(cppx::http::transfer::TransferOptions const& options,
     if (!result)
         return std::unexpected(result.error());
 
-    return cppx::http::transfer::TextResult{
-        .backend = cppx::http::transfer::TransferBackend::Shell,
+    return text_result_t{
+        .backend = backend_t::Shell,
         .text = std::move(result->stdout_text),
     };
 }
 
-inline auto shell_download(cppx::http::transfer::TransferOptions const& options,
-                           std::string_view url,
-                           std::filesystem::path const& path)
-    -> std::expected<cppx::http::transfer::TransferResult, cppx::http::transfer::TransferError> {
+inline auto download_file(options_t const& options,
+                          std::string_view url,
+                          std::filesystem::path const& path)
+    -> std::expected<transfer_result_t, error_t> {
     auto prepared = ensure_parent_directory(path);
     if (!prepared)
         return std::unexpected(prepared.error());
@@ -213,18 +305,13 @@ inline auto shell_download(cppx::http::transfer::TransferOptions const& options,
         "$ProgressPreference='SilentlyContinue';"
         "$headers=@{};"
     };
-    for (auto const& [name, value] : options.headers) {
-        script += std::format(
-            "$headers[{}]={};",
-            powershell_quote(name),
-            powershell_quote(value));
-    }
+    append_powershell_headers(script, options.headers);
     script += std::format(
         "Invoke-WebRequest -UseBasicParsing -Uri {} -Headers $headers -OutFile {} -MaximumRedirection 10;",
         powershell_quote(url),
         powershell_quote(partial.string()));
 
-    auto result = run_shell(
+    auto result = run(
         {
             .program = "powershell",
             .args = {
@@ -250,30 +337,29 @@ inline auto shell_download(cppx::http::transfer::TransferOptions const& options,
     if (ec) {
         cleanup_download_target(path);
         return make_error(
-            cppx::http::transfer::transfer_error_code::shell_failed,
-            cppx::http::transfer::TransferBackend::Shell,
-            std::format("download failed: could not finalize file '{}': {}", path.string(), ec.message()));
+            error_code_t::shell_failed,
+            backend_t::Shell,
+            std::format(
+                "download failed: could not finalize file '{}': {}",
+                path.string(),
+                ec.message()));
     }
 
-    return cppx::http::transfer::TransferResult{
-        .backend = cppx::http::transfer::TransferBackend::Shell,
+    return transfer_result_t{
+        .backend = backend_t::Shell,
     };
 }
 #else
-inline auto shell_text(cppx::http::transfer::TransferOptions const& options,
-                       std::string_view url)
-    -> std::expected<cppx::http::transfer::TextResult, cppx::http::transfer::TransferError> {
+inline auto get_text(options_t const& options, std::string_view url)
+    -> std::expected<text_result_t, error_t> {
     auto spec = cppx::process::ProcessSpec{
         .program = "curl",
         .args = {"-fsSL", "--compressed"},
     };
-    for (auto const& [name, value] : options.headers) {
-        spec.args.push_back("-H");
-        spec.args.push_back(std::format("{}: {}", name, value));
-    }
+    append_curl_headers(spec, options.headers);
     spec.args.push_back(std::string{url});
 
-    auto captured = run_shell(
+    auto captured = run(
         std::move(spec),
         options,
         "request failed: shell backend unavailable (curl not found)",
@@ -281,16 +367,16 @@ inline auto shell_text(cppx::http::transfer::TransferOptions const& options,
     if (!captured)
         return std::unexpected(captured.error());
 
-    return cppx::http::transfer::TextResult{
-        .backend = cppx::http::transfer::TransferBackend::Shell,
+    return text_result_t{
+        .backend = backend_t::Shell,
         .text = std::move(captured->stdout_text),
     };
 }
 
-inline auto shell_download(cppx::http::transfer::TransferOptions const& options,
-                           std::string_view url,
-                           std::filesystem::path const& path)
-    -> std::expected<cppx::http::transfer::TransferResult, cppx::http::transfer::TransferError> {
+inline auto download_file(options_t const& options,
+                          std::string_view url,
+                          std::filesystem::path const& path)
+    -> std::expected<transfer_result_t, error_t> {
     auto prepared = ensure_parent_directory(path);
     if (!prepared)
         return std::unexpected(prepared.error());
@@ -303,15 +389,12 @@ inline auto shell_download(cppx::http::transfer::TransferOptions const& options,
         .program = "curl",
         .args = {"-fSL", "--compressed"},
     };
-    for (auto const& [name, value] : options.headers) {
-        spec.args.push_back("-H");
-        spec.args.push_back(std::format("{}: {}", name, value));
-    }
+    append_curl_headers(spec, options.headers);
     spec.args.push_back("-o");
     spec.args.push_back(partial.string());
     spec.args.push_back(std::string{url});
 
-    auto captured = run_shell(
+    auto captured = run(
         std::move(spec),
         options,
         "download failed: shell backend unavailable (curl not found)",
@@ -326,154 +409,108 @@ inline auto shell_download(cppx::http::transfer::TransferOptions const& options,
     if (ec) {
         cleanup_download_target(path);
         return make_error(
-            cppx::http::transfer::transfer_error_code::shell_failed,
-            cppx::http::transfer::TransferBackend::Shell,
-            std::format("download failed: could not finalize file '{}': {}", path.string(), ec.message()));
+            error_code_t::shell_failed,
+            backend_t::Shell,
+            std::format(
+                "download failed: could not finalize file '{}': {}",
+                path.string(),
+                ec.message()));
     }
 
-    return cppx::http::transfer::TransferResult{
-        .backend = cppx::http::transfer::TransferBackend::Shell,
+    return transfer_result_t{
+        .backend = backend_t::Shell,
     };
 }
 #endif
 
-inline auto cppx_text(cppx::http::transfer::TransferOptions const& options,
-                      std::string_view url)
-    -> std::expected<cppx::http::transfer::TextResult, cppx::http::transfer::TransferError> {
-    auto response = cppx::http::system::client{}.get(url, options.headers);
-    if (!response)
-        return std::unexpected(http_failure("request", response.error()));
-    if (!response->stat.ok())
-        return std::unexpected(http_status_failure(response->stat.code));
-    return cppx::http::transfer::TextResult{
-        .backend = cppx::http::transfer::TransferBackend::CppxHttp,
-        .text = response->body_string(),
-    };
-}
+} // namespace shell_backend
 
-inline auto cppx_download(cppx::http::transfer::TransferOptions const& options,
-                          std::string_view url,
-                          std::filesystem::path const& path)
-    -> std::expected<cppx::http::transfer::TransferResult, cppx::http::transfer::TransferError> {
-    auto prepared = ensure_parent_directory(path);
-    if (!prepared)
-        return std::unexpected(prepared.error());
-
-    auto last_error = cppx::http::transfer::TransferError{};
-    for (int attempt = 1; attempt <= 3; ++attempt) {
-        cleanup_download_target(path);
-        auto response = cppx::http::system::client{}.download_to(url, path, options.headers);
-        if (response) {
-            if (!response->stat.ok()) {
-                cleanup_download_target(path);
-                return std::unexpected(http_status_failure(response->stat.code));
-            }
-            return cppx::http::transfer::TransferResult{
-                .backend = cppx::http::transfer::TransferBackend::CppxHttp,
-            };
-        }
-
-        last_error = http_failure("download", response.error());
-        if (!last_error.fallback_allowed || attempt == 3)
-            break;
-        std::this_thread::sleep_for(std::chrono::milliseconds{250 * attempt});
-    }
-
-    cleanup_download_target(path);
-    return std::unexpected(last_error);
-}
-
-inline auto auto_text(cppx::http::transfer::TransferOptions options,
-                      std::string_view url)
-    -> std::expected<cppx::http::transfer::TextResult, cppx::http::transfer::TransferError> {
-    auto primary = cppx_text(options, url);
+template <class Result, class FallbackFn>
+auto with_shell_fallback(std::string_view operation,
+                         std::expected<Result, error_t> primary,
+                         FallbackFn&& fallback_fn)
+    -> std::expected<Result, error_t> {
     if (primary)
         return primary;
-    if (!primary.error().fallback_allowed)
-        return std::unexpected(primary.error());
 
-    auto fallback = shell_text(options, url);
-    if (!fallback) {
-        return make_error(
-            fallback.error().code,
-            fallback.error().backend,
-            std::format("{}; {}", primary.error().message, fallback.error().message),
-            primary.error().http_error,
-            primary.error().http_status_code,
-            false);
-    }
+    auto primary_error = primary.error();
+    if (!primary_error.fallback_allowed)
+        return std::unexpected(primary_error);
+
+    auto fallback = fallback_fn();
+    if (!fallback)
+        return combine_primary_and_fallback(primary_error, fallback.error());
 
     fallback->warning = std::format(
-        "warning: cppx.http request failed ({}); using shell backend",
-        primary.error().message);
+        "warning: cppx.http {} failed ({}); using shell backend",
+        operation,
+        primary_error.message);
     return fallback;
 }
 
-inline auto auto_download(cppx::http::transfer::TransferOptions options,
-                          std::string_view url,
-                          std::filesystem::path const& path)
-    -> std::expected<cppx::http::transfer::TransferResult, cppx::http::transfer::TransferError> {
-    auto primary = cppx_download(options, url, path);
-    if (primary)
-        return primary;
-    if (!primary.error().fallback_allowed)
-        return std::unexpected(primary.error());
-
-    auto fallback = shell_download(options, url, path);
-    if (!fallback) {
-        return make_error(
-            fallback.error().code,
-            fallback.error().backend,
-            std::format("{}; {}", primary.error().message, fallback.error().message),
-            primary.error().http_error,
-            primary.error().http_status_code,
-            false);
+inline auto dispatch_get_text(std::string_view url, options_t options)
+    -> std::expected<text_result_t, error_t> {
+    switch (options.backend) {
+    case backend_t::CppxHttp:
+        return cppx_backend::get_text(options, url);
+    case backend_t::Shell:
+        return shell_backend::get_text(options, url);
+    case backend_t::Auto:
+        return with_shell_fallback(
+            "request",
+            cppx_backend::get_text(options, url),
+            [&] { return shell_backend::get_text(options, url); });
     }
+    return make_error(
+        error_code_t::unsupported,
+        backend_t::Auto,
+        "unsupported transfer backend");
+}
 
-    fallback->warning = std::format(
-        "warning: cppx.http download failed ({}); using shell backend",
-        primary.error().message);
-    return fallback;
+inline auto dispatch_download_file(std::string_view url,
+                                   std::filesystem::path const& path,
+                                   options_t options)
+    -> std::expected<transfer_result_t, error_t> {
+    switch (options.backend) {
+    case backend_t::CppxHttp:
+        return cppx_backend::download_file(options, url, path);
+    case backend_t::Shell:
+        return shell_backend::download_file(options, url, path);
+    case backend_t::Auto:
+        return with_shell_fallback(
+            "download",
+            cppx_backend::download_file(options, url, path),
+            [&] { return shell_backend::download_file(options, url, path); });
+    }
+    return make_error(
+        error_code_t::unsupported,
+        backend_t::Auto,
+        "unsupported transfer backend");
 }
 
 } // namespace cppx::http::transfer::detail
 
 export namespace cppx::http::transfer::system {
 
-inline auto get_text(std::string_view url,
-                     cppx::http::transfer::TransferOptions options = {})
-    -> std::expected<cppx::http::transfer::TextResult, cppx::http::transfer::TransferError> {
-    switch (options.backend) {
-    case cppx::http::transfer::TransferBackend::CppxHttp:
-        return cppx::http::transfer::detail::cppx_text(options, url);
-    case cppx::http::transfer::TransferBackend::Shell:
-        return cppx::http::transfer::detail::shell_text(options, url);
-    case cppx::http::transfer::TransferBackend::Auto:
-        return cppx::http::transfer::detail::auto_text(options, url);
-    }
-    return cppx::http::transfer::detail::make_error(
-        cppx::http::transfer::transfer_error_code::unsupported,
-        cppx::http::transfer::TransferBackend::Auto,
-        "unsupported transfer backend");
+inline auto get_text(
+    std::string_view url,
+    cppx::http::transfer::TransferOptions options = {})
+    -> std::expected<
+        cppx::http::transfer::TextResult,
+        cppx::http::transfer::TransferError> {
+    return cppx::http::transfer::detail::dispatch_get_text(url, options);
 }
 
-inline auto download_file(
-    std::string_view url,
-    std::filesystem::path const& path,
-    cppx::http::transfer::TransferOptions options = {})
-    -> std::expected<cppx::http::transfer::TransferResult, cppx::http::transfer::TransferError> {
-    switch (options.backend) {
-    case cppx::http::transfer::TransferBackend::CppxHttp:
-        return cppx::http::transfer::detail::cppx_download(options, url, path);
-    case cppx::http::transfer::TransferBackend::Shell:
-        return cppx::http::transfer::detail::shell_download(options, url, path);
-    case cppx::http::transfer::TransferBackend::Auto:
-        return cppx::http::transfer::detail::auto_download(options, url, path);
-    }
-    return cppx::http::transfer::detail::make_error(
-        cppx::http::transfer::transfer_error_code::unsupported,
-        cppx::http::transfer::TransferBackend::Auto,
-        "unsupported transfer backend");
+inline auto download_file(std::string_view url,
+                          std::filesystem::path const& path,
+                          cppx::http::transfer::TransferOptions options = {})
+    -> std::expected<
+        cppx::http::transfer::TransferResult,
+        cppx::http::transfer::TransferError> {
+    return cppx::http::transfer::detail::dispatch_download_file(
+        url,
+        path,
+        options);
 }
 
 } // namespace cppx::http::transfer::system

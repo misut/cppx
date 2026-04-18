@@ -164,10 +164,33 @@ void test_download_file_uses_cppx_http_without_fallback_on_http_404() {
     server.join();
 }
 
+void test_download_file_connection_failure_leaves_no_partial_file() {
+    auto output = std::filesystem::temp_directory_path() / std::format(
+        "cppx-transfer-failure-{}",
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    auto partial = output;
+    partial += ".part";
+
+    auto result = cppx::http::transfer::system::download_file(
+        "http://127.0.0.1:1/unreachable",
+        output,
+        {
+            .backend = cppx::http::transfer::TransferBackend::Auto,
+            .shell_timeout = std::chrono::milliseconds{500},
+        });
+
+    tc.check(!result, "connection failure surfaces as download error");
+    tc.check(!std::filesystem::exists(output),
+             "connection failure leaves no output file");
+    tc.check(!std::filesystem::exists(partial),
+             "connection failure leaves no partial file");
+}
+
 int main() {
     test_get_text_does_not_fallback_on_http_404();
     test_get_text_attempts_shell_fallback_on_connection_failure();
     test_shell_backend_timeout_surfaces_without_hanging();
     test_download_file_uses_cppx_http_without_fallback_on_http_404();
+    test_download_file_connection_failure_leaves_no_partial_file();
     return tc.summary("cppx.http.transfer.system");
 }

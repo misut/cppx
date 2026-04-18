@@ -1,3 +1,6 @@
+// Pure checksum parsing and normalization helpers. Host tool execution
+// stays in cppx.checksum.system.
+
 export module cppx.checksum;
 import std;
 

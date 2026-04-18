@@ -1,3 +1,6 @@
+// Transfer policy types shared by cppx.http and shell-backed fallbacks.
+// Backend execution stays in cppx.http.transfer.system.
+
 export module cppx.http.transfer;
 import std;
 import cppx.http;

@@ -2,8 +2,9 @@
 
 C++23 extension library for projects that want a small, composable
 standard-library-first foundation. `cppx` provides aggregate
-reflection, platform detection, environment helpers, coroutine
-primitives, test utilities, and HTTP building blocks. MIT License.
+reflection, platform detection, environment and filesystem helpers,
+process/archive/checksum utilities, coroutine primitives, test
+utilities, and HTTP building blocks. MIT License.
 
 ## What it is for
 
@@ -11,9 +12,12 @@ primitives, test utilities, and HTTP building blocks. MIT License.
 projects:
 
 - pure-by-default reflection and environment helpers
+- small filesystem, process, archive, and checksum utilities at the
+  system boundary
 - coroutine primitives with deterministic test support
 - small test utilities for standalone executables
-- HTTP types, parser/serializer, client/server helpers, and system adapters
+- HTTP types, parser/serializer, client/server/transfer helpers, and
+  system adapters
 
 The library stays close to standard C++23: modules, `std::expected`,
 `std::optional`, coroutines, and `import std;`.
@@ -27,10 +31,18 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.platform` | Compile-time host detection: `OS`, `Arch`, `Platform`, `host()`. |
 | `cppx.env` | Pure environment/path helpers such as `get`, `home_dir`, `find_in_path`, `shell_quote`. |
 | `cppx.env.system` | System-backed environment/filesystem adapters for `cppx.env`. |
+| `cppx.fs` | Filesystem-facing value types such as `TextWrite` and `fs_error`. |
+| `cppx.fs.system` | System-backed text read/write helpers such as `read_text`, `write_if_changed`, and `apply_writes`. |
 | `cppx.resource` | Pure resource classification and path-resolution helpers for filesystem paths and URLs. |
 | `cppx.unicode` | Pure UTF-8/UTF-16/wide-string conversion helpers for platform boundaries. |
 | `cppx.os` | OS-facing capability declarations such as `open_error`. |
 | `cppx.os.system` | System-backed OS helpers such as `open_url`. |
+| `cppx.process` | Process specs/results and `process_error` types for child-process work. |
+| `cppx.process.system` | System-backed `run` and `capture` helpers with timeout/cwd/env override support. |
+| `cppx.archive` | Archive extraction specs and error types. |
+| `cppx.archive.system` | System-backed archive extraction helpers. |
+| `cppx.checksum` | Pure checksum parsing/normalization helpers and error types. |
+| `cppx.checksum.system` | System-backed SHA-256 hashing helpers. |
 | `cppx.async` | Coroutine primitives: `task<T>`, `generator<T>`, `executor_engine`, `run`, `async_scope`, `when_all`. |
 | `cppx.async.system` | System event-loop executor, timer awaitables, and networking helpers for async I/O. |
 | `cppx.async.test` | Deterministic coroutine test executor with virtual time. |
@@ -38,7 +50,9 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.http` | Core HTTP types, serializer, parser, concepts, and helpers. |
 | `cppx.http.client` | Generic HTTP client over pluggable stream/TLS backends. |
 | `cppx.http.server` | Generic HTTP server, routing, static file serving, MIME helpers. |
+| `cppx.http.transfer` | Transfer backend policy, result types, and fallback rules. |
 | `cppx.http.system` | Platform-backed sockets/TLS plus convenience helpers like `get` and `download`. |
+| `cppx.http.transfer.system` | First-party text/file transfer facade with bounded shell fallback. |
 
 ## Quick Start
 
@@ -103,6 +117,25 @@ int main() {
 preferred first-party HTTP entrypoints. Platform transport details stay
 behind that facade, including WinHTTP-backed requests on Windows.
 
+### Download with backend fallback
+
+```cpp
+import cppx.http.transfer;
+import cppx.http.transfer.system;
+import std;
+
+int main() {
+    auto result = cppx::http::transfer::system::download_file(
+        "https://example.com/tool.tar.gz",
+        "tool.tar.gz",
+        {.backend = cppx::http::transfer::TransferBackend::Auto});
+    if (!result) {
+        std::println(std::cerr, "error: {}", result.error().message);
+        return 1;
+    }
+}
+```
+
 ### URL opening
 
 ```cpp
@@ -164,7 +197,7 @@ exon test
 
 ```toml
 [dependencies]
-"github.com/misut/cppx" = "1.1.0"
+"github.com/misut/cppx" = "1.4.0"
 ```
 
 ### CMake
@@ -173,7 +206,7 @@ exon test
 include(FetchContent)
 FetchContent_Declare(cppx
     GIT_REPOSITORY https://github.com/misut/cppx.git
-    GIT_TAG v1.1.0
+    GIT_TAG v1.4.0
     GIT_SHALLOW ON
 )
 FetchContent_MakeAvailable(cppx)
@@ -185,8 +218,8 @@ target_link_libraries(your_target PRIVATE cppx)
 - `cppx.reflect` supports aggregate types with up to 24 direct fields.
 - Field-name extraction currently targets Clang and MSVC.
 - Nested aggregates may need an explicit descriptor in higher-level libraries that build on reflection.
-- `import cppx;` is intentionally small. HTTP and async modules remain opt-in imports.
-- System modules (`cppx.env.system`, `cppx.async.system`, `cppx.http.system`) are the boundary where real OS/network effects occur.
+- `import cppx;` is intentionally small. Filesystem, process, archive, checksum, HTTP, and async modules remain opt-in imports.
+- System modules (`cppx.env.system`, `cppx.fs.system`, `cppx.os.system`, `cppx.process.system`, `cppx.archive.system`, `cppx.checksum.system`, `cppx.async.system`, `cppx.http.system`, `cppx.http.transfer.system`) are the boundary where real OS/network effects occur.
 
 ## Tested behavior
 
@@ -195,9 +228,10 @@ Current tests cover:
 - reflection field count, field access, and field names
 - platform detection and wildcard matching
 - pure env helpers and system-backed env lookup
+- filesystem writes, process execution, archive extraction, and checksum helpers
 - resource classification and Unicode boundary conversions
 - coroutine tasks, generators, scopes, and deterministic virtual-time testing
-- HTTP URL parsing, headers, serialization, incremental parsing, client behavior, server routing, static serving, and system networking paths
+- HTTP URL parsing, headers, serialization, incremental parsing, client behavior, server routing, transfer fallback policy, and system networking paths
 - OS URL-opening error paths
 
 ## Repository

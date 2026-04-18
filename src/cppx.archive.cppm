@@ -1,3 +1,6 @@
+// Archive extraction specs and error types. Tool execution and file
+// mutation stay in cppx.archive.system.
+
 export module cppx.archive;
 import std;
 

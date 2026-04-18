@@ -1,3 +1,6 @@
+// Filesystem-facing value types and error enums. Side effects stay in
+// cppx.fs.system so higher-level code can keep policy separate from I/O.
+
 export module cppx.fs;
 import std;
 
