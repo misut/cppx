@@ -22,6 +22,10 @@ inline thread_local test_executor* current_executor = nullptr;
 
 } // namespace detail
 
+auto current_executor() noexcept -> test_executor* {
+    return detail::current_executor;
+}
+
 // ---- test_executor -------------------------------------------------------
 
 class test_executor {
@@ -32,12 +36,12 @@ public:
 
     // Satisfies executor_engine.
     void schedule(std::coroutine_handle<> h) {
-        queue_.push({current_time_, h});
+        queue_.push({current_time_, next_order_++, h});
     }
 
     // Schedule a coroutine to resume at a specific virtual time.
     void schedule_at(duration when, std::coroutine_handle<> h) {
-        queue_.push({when, h});
+        queue_.push({when, next_order_++, h});
     }
 
     // Run all immediately-ready coroutines (scheduled at or before
@@ -84,10 +88,13 @@ public:
 private:
     struct entry {
         duration when;
+        std::size_t order;
         std::coroutine_handle<> handle;
 
         auto operator>(entry const& other) const -> bool {
-            return when > other.when;
+            if (when != other.when)
+                return when > other.when;
+            return order > other.order;
         }
     };
 
@@ -107,6 +114,7 @@ private:
     }
 
     duration current_time_{};
+    std::size_t next_order_ = 0;
     std::priority_queue<entry, std::vector<entry>, std::greater<>> queue_;
 };
 

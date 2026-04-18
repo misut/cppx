@@ -46,6 +46,7 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.async` | Coroutine primitives: `task<T>`, `generator<T>`, `executor_engine`, `run`, `async_scope`, `when_all`. |
 | `cppx.async.system` | System event-loop executor, timer awaitables, and networking helpers for async I/O. |
 | `cppx.async.test` | Deterministic coroutine test executor with virtual time. |
+| `cppx.async.system.test` | Scripted in-memory async listener/stream fakes for deterministic system-layer tests. |
 | `cppx.test` | Minimal test helpers for standalone executables. |
 | `cppx.http` | Core HTTP types, serializer, parser, concepts, and helpers. |
 | `cppx.http.client` | Generic HTTP client over pluggable stream/TLS backends. |
@@ -92,6 +93,10 @@ int main() {
     std::println("{}", value);
 }
 ```
+
+Use `import cppx.async.system.test;` when you want deterministic tests for
+system-facing coroutine code without real sockets. Keep real-I/O validation
+as an opt-in smoke run with `CPPX_RUN_ASYNC_SYSTEM_SMOKE=1`.
 
 ### HTTP client
 
