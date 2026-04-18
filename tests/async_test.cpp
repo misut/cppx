@@ -1,5 +1,5 @@
-// Tests for cppx.async.test — deterministic test executor with
-// virtual clock, delay, advance_time_by, run_test.
+// Tests for cppx.async.test — deterministic executor, virtual time,
+// stable scheduling, and external wake-up hooks.
 
 import cppx.async;
 import cppx.async.test;
@@ -8,13 +8,6 @@ import std;
 
 cppx::test::context tc;
 using namespace std::chrono_literals;
-
-// ---- helpers — named coroutine functions avoid lambda lifetime issues -----
-
-// Variables shared between coroutines and tests via pointers/refs.
-// Each test function creates its own locals and passes them to
-// coroutine functions that take explicit parameters or use globals
-// scoped to the test.
 
 // ---- basic executor usage ------------------------------------------------
 
@@ -30,6 +23,7 @@ void test_executor_schedule_and_run() {
     ex.schedule(coro.handle());
     tc.check(!ran, "coroutine not started before run");
     ex.run();
+    coro.result();
     tc.check(ran, "coroutine ran after run()");
 }
 
@@ -62,6 +56,7 @@ void test_delay_advance_time_by() {
     tc.check_eq(step, 2, "still step 2 at 200ms");
 
     ex.advance_time_by(100ms);
+    coro.result();
     tc.check_eq(step, 3, "step 3 at 300ms");
 }
 
@@ -81,37 +76,95 @@ void test_advance_until_idle() {
 
     ex.schedule(coro.handle());
     ex.advance_until_idle();
+    coro.result();
+
     tc.check_eq(completed, 2, "all stages completed");
     tc.check(!ex.has_pending(), "no pending coroutines");
-
-    auto elapsed = ex.current_time();
-    tc.check(elapsed >= 1500ms, "virtual clock advanced to 1500ms");
+    tc.check(ex.current_time() == 1500ms, "virtual clock advanced to 1500ms");
 }
 
-// ---- multiple coroutines with delay ordering -----------------------------
+// ---- stable FIFO ordering at the same virtual time -----------------------
 
-cppx::async::task<void> log_after(
+cppx::async::task<void> append_after(
     std::vector<std::string>& log,
-    std::chrono::steady_clock::duration dt,
-    std::string msg) {
-    co_await cppx::async::test::delay{dt};
-    log.push_back(std::move(msg));
+    std::string message) {
+    co_await cppx::async::test::delay{100ms};
+    log.push_back(std::move(message));
 }
 
-void test_interleaved_delays() {
+void test_same_timestamp_fifo() {
     cppx::async::test::test_executor ex;
     std::vector<std::string> log;
 
-    auto fast = log_after(log, 50ms, "fast");
-    auto slow = log_after(log, 100ms, "slow");
+    auto first = append_after(log, "first");
+    auto second = append_after(log, "second");
 
-    ex.schedule(fast.handle());
-    ex.schedule(slow.handle());
+    ex.schedule(first.handle());
+    ex.schedule(second.handle());
     ex.advance_until_idle();
+    first.result();
+    second.result();
 
-    tc.check_eq(static_cast<int>(log.size()), 2, "both completed");
-    tc.check_eq(log[0], std::string{"fast"}, "fast first");
-    tc.check_eq(log[1], std::string{"slow"}, "slow second");
+    tc.check_eq(static_cast<int>(log.size()), 2, "both delayed tasks completed");
+    tc.check_eq(log[0], std::string{"first"}, "same timestamp keeps FIFO order");
+    tc.check_eq(log[1], std::string{"second"}, "second task follows first");
+}
+
+// ---- external schedule-based wake-up -------------------------------------
+
+struct manual_signal {
+    cppx::async::test::test_executor* executor = nullptr;
+    std::coroutine_handle<> waiter = nullptr;
+    bool ready = false;
+
+    struct awaiter {
+        manual_signal& signal;
+
+        auto await_ready() const noexcept -> bool {
+            return signal.ready;
+        }
+
+        void await_suspend(std::coroutine_handle<> handle) const {
+            signal.executor = cppx::async::test::current_executor();
+            signal.waiter = handle;
+        }
+
+        void await_resume() const noexcept {}
+    };
+
+    auto wait() -> awaiter {
+        return awaiter{*this};
+    }
+
+    void fire() {
+        ready = true;
+        if (executor && waiter) {
+            executor->schedule(waiter);
+            waiter = nullptr;
+        }
+    }
+};
+
+cppx::async::task<void> wait_for_signal(manual_signal& signal, bool& done) {
+    co_await signal.wait();
+    done = true;
+}
+
+void test_external_schedule_wakeup() {
+    cppx::async::test::test_executor ex;
+    manual_signal signal;
+    bool done = false;
+    auto coro = wait_for_signal(signal, done);
+
+    ex.schedule(coro.handle());
+    ex.run();
+    tc.check(!done, "coroutine suspended before signal fire");
+    tc.check(signal.executor == &ex, "signal captured the current executor");
+
+    signal.fire();
+    ex.run();
+    coro.result();
+    tc.check(done, "external schedule resumes the waiter");
 }
 
 // ---- current_time tracking -----------------------------------------------
@@ -140,7 +193,8 @@ void test_zero_delay() {
     auto coro = zero_delay_coro(done);
     ex.schedule(coro.handle());
     ex.run();
-    tc.check(done, "zero delay resumes in same run()");
+    coro.result();
+    tc.check(done, "zero delay resumes in the same run()");
 }
 
 // ---- run_test helper -----------------------------------------------------
@@ -209,7 +263,8 @@ int main() {
     test_executor_schedule_and_run();
     test_delay_advance_time_by();
     test_advance_until_idle();
-    test_interleaved_delays();
+    test_same_timestamp_fifo();
+    test_external_schedule_wakeup();
     test_current_time();
     test_zero_delay();
     test_run_test_returns_value();

@@ -1,154 +1,270 @@
-// Smoke tests for cppx.async.system — event loop with real I/O.
-// Uses async_stream and async_listener for a localhost TCP round-trip.
+// Deterministic tests for cppx.async.system using scripted fakes.
 
 import cppx.async;
-import cppx.async.system;
+import cppx.async.test;
+import cppx.async.system.test;
 import cppx.http;
 import cppx.test;
 import std;
 
 cppx::test::context tc;
-
-#if !defined(__wasi__)
 using namespace std::chrono_literals;
 
-// ---- TCP round-trip via event loop ---------------------------------------
+namespace async_test = cppx::async::test;
+namespace system_test = cppx::async::system::test;
 
-cppx::async::task<void> tcp_roundtrip_test(bool& passed) {
-    // Bind listener on ephemeral port.
-    auto listener_res = co_await cppx::async::system::async_listener::bind(
-        "127.0.0.1", 0);
-    if (!listener_res) {
-        passed = false;
-        co_return;
-    }
-    auto listener = std::move(*listener_res);
-    auto port = listener.local_port();
-
-    // Connect client.
-    auto client_res = co_await cppx::async::system::async_stream::connect(
-        "127.0.0.1", port);
-    if (!client_res) {
-        listener.close();
-        passed = false;
-        co_return;
-    }
-    auto client = std::move(*client_res);
-
-    // Accept server-side connection.
-    auto server_res = co_await listener.accept();
-    if (!server_res) {
-        client.close();
-        listener.close();
-        passed = false;
-        co_return;
-    }
-    auto server = std::move(*server_res);
-
-    // Send from client.
-    auto payload = std::string{"async hello"};
+auto to_bytes(std::string_view text) -> std::vector<std::byte> {
     auto bytes = std::vector<std::byte>{};
-    for (auto c : payload)
-        bytes.push_back(static_cast<std::byte>(c));
-    auto send_res = co_await client.send(bytes);
-    if (!send_res) {
-        passed = false;
-        client.close();
-        server.close();
-        listener.close();
-        co_return;
-    }
-
-    // Receive on server.
-    auto buf = std::vector<std::byte>(64);
-    auto recv_res = co_await server.recv(buf);
-    if (!recv_res) {
-        passed = false;
-        client.close();
-        server.close();
-        listener.close();
-        co_return;
-    }
-
-    auto received = std::string{
-        reinterpret_cast<char const*>(buf.data()), *recv_res};
-    passed = (received == payload);
-
-    client.close();
-    server.close();
-    listener.close();
+    bytes.reserve(text.size());
+    for (auto ch : text)
+        bytes.push_back(static_cast<std::byte>(ch));
+    return bytes;
 }
 
-void test_tcp_roundtrip() {
-    bool passed = false;
-    auto t = tcp_roundtrip_test(passed);
-    cppx::async::system::run(t);
-    tc.check(passed, "async TCP round-trip");
+auto from_bytes(std::span<std::byte const> bytes) -> std::string {
+    auto text = std::string{};
+    text.reserve(bytes.size());
+    for (auto byte : bytes)
+        text.push_back(static_cast<char>(byte));
+    return text;
 }
 
-// ---- connect refused -----------------------------------------------------
+// ---- round-trip ----------------------------------------------------------
 
-cppx::async::task<void> connect_refused_test(bool& got_error) {
-    auto res = co_await cppx::async::system::async_stream::connect(
-        "127.0.0.1", 1);
-    got_error = !res.has_value() &&
-        res.error() == cppx::http::net_error::connect_refused;
+auto scripted_roundtrip(system_test::test_network& network)
+    -> cppx::async::task<bool> {
+    auto scope = network.activate();
+    auto listener_res = co_await system_test::test_listener::bind("127.0.0.1", 0);
+    if (!listener_res)
+        co_return false;
+
+    auto listener = std::move(*listener_res);
+    auto client_res = co_await system_test::test_stream::connect(
+        "127.0.0.1", listener.local_port());
+    if (!client_res)
+        co_return false;
+
+    auto client = std::move(*client_res);
+    auto server_res = co_await listener.accept();
+    if (!server_res)
+        co_return false;
+
+    auto server = std::move(*server_res);
+    auto payload = to_bytes("async hello");
+    auto send_res = co_await client.send(payload);
+    if (!send_res || *send_res != payload.size())
+        co_return false;
+
+    auto buffer = std::vector<std::byte>(32);
+    auto recv_res = co_await server.recv(buffer);
+    if (!recv_res)
+        co_return false;
+
+    co_return from_bytes(std::span{buffer}.first(*recv_res)) == "async hello";
+}
+
+void test_deterministic_roundtrip() {
+    system_test::test_network network;
+    auto passed = async_test::run_test(
+        [&](async_test::test_executor&) -> cppx::async::task<bool> {
+            return scripted_roundtrip(network);
+        });
+    tc.check(passed, "deterministic async round-trip");
+}
+
+// ---- scripted errors -----------------------------------------------------
+
+auto connect_refused(system_test::test_network& network)
+    -> cppx::async::task<bool> {
+    auto scope = network.activate();
+    auto result = co_await system_test::test_stream::connect("127.0.0.1", 9000);
+    co_return !result
+        && result.error() == cppx::http::net_error::connect_refused;
 }
 
 void test_connect_refused() {
-    bool got_error = false;
-    auto t = connect_refused_test(got_error);
-    cppx::async::system::run(t);
-    tc.check(got_error, "async connect refused");
+    system_test::test_network network;
+    auto refused = async_test::run_test(
+        [&](async_test::test_executor&) -> cppx::async::task<bool> {
+            return connect_refused(network);
+        });
+    tc.check(refused, "connect refused is deterministic");
 }
 
-// ---- event_loop stops when no work remains -------------------------------
-
-void test_event_loop_stops() {
-    cppx::async::system::event_loop loop;
-    bool done = false;
-    auto coro = [](bool& d) -> cppx::async::task<void> {
-        d = true;
-        co_return;
-    };
-    auto t = coro(done);
-    loop.schedule(t.handle());
-    loop.run(); // should return, not hang
-    tc.check(done, "event loop stops when no work remains");
+auto bind_failed(system_test::test_network& network)
+    -> cppx::async::task<bool> {
+    auto scope = network.activate();
+    network.fail_next_bind();
+    auto result = co_await system_test::test_listener::bind("127.0.0.1", 0);
+    co_return !result && result.error() == cppx::http::net_error::bind_failed;
 }
 
-// ---- timer scheduling ----------------------------------------------------
-
-cppx::async::task<void> sleep_for_test(bool& resumed,
-                                       std::chrono::milliseconds& elapsed) {
-    auto const start = std::chrono::steady_clock::now();
-    co_await cppx::async::system::sleep_for(50ms);
-    elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - start);
-    resumed = true;
+void test_bind_failed() {
+    system_test::test_network network;
+    auto failed = async_test::run_test(
+        [&](async_test::test_executor&) -> cppx::async::task<bool> {
+            return bind_failed(network);
+        });
+    tc.check(failed, "bind failure can be scripted");
 }
 
-void test_sleep_for() {
-    bool resumed = false;
-    auto elapsed = std::chrono::milliseconds{0};
-    auto t = sleep_for_test(resumed, elapsed);
-    cppx::async::system::event_loop loop;
-    loop.schedule(t.handle());
-    loop.run();
-    t.result();
-    tc.check(resumed, "sleep_for resumes coroutine");
-    tc.check(elapsed >= 30ms,
-             "sleep_for waits for approximately the requested duration");
+// ---- accept wake-up ------------------------------------------------------
+
+void test_accept_wakeup() {
+    system_test::test_network network;
+    async_test::test_executor ex;
+    std::vector<std::string> log;
+    std::uint16_t port = 0;
+
+    auto server_task = [&]() -> cppx::async::task<void> {
+        auto scope = network.activate();
+        auto listener_res =
+            co_await system_test::test_listener::bind("127.0.0.1", 0);
+        if (!listener_res)
+            co_return;
+
+        auto listener = std::move(*listener_res);
+        port = listener.local_port();
+        log.push_back("listening");
+
+        auto server = co_await listener.accept();
+        if (server)
+            log.push_back("accepted");
+    }();
+
+    auto client_task = [&]() -> cppx::async::task<void> {
+        auto scope = network.activate();
+        while (port == 0)
+            co_await async_test::delay{1ms};
+
+        co_await async_test::delay{25ms};
+        auto client = co_await system_test::test_stream::connect("127.0.0.1", port);
+        if (client)
+            log.push_back("connected");
+    }();
+
+    ex.schedule(server_task.handle());
+    ex.schedule(client_task.handle());
+    ex.advance_until_idle();
+    server_task.result();
+    client_task.result();
+
+    tc.check_eq(static_cast<int>(log.size()), 3, "accept/connect flow completed");
+    tc.check_eq(log[0], std::string{"listening"}, "listener starts first");
+    tc.check_eq(log[1], std::string{"connected"}, "connect wakes accept waiter");
+    tc.check_eq(log[2], std::string{"accepted"}, "accept resumes after connect");
 }
 
-#endif // !__wasi__
+// ---- recv wake-up + virtual time -----------------------------------------
+
+void test_recv_wakeup_and_virtual_time() {
+    system_test::test_network network;
+    network.set_connect_delay(10ms);
+    network.set_accept_delay(15ms);
+    network.set_send_delay(25ms);
+    network.set_recv_delay(5ms);
+
+    async_test::test_executor ex;
+    std::vector<std::string> log;
+    std::uint16_t port = 0;
+    std::string received;
+
+    auto server_task = [&]() -> cppx::async::task<void> {
+        auto scope = network.activate();
+        auto listener_res =
+            co_await system_test::test_listener::bind("127.0.0.1", 0);
+        if (!listener_res)
+            co_return;
+
+        auto listener = std::move(*listener_res);
+        port = listener.local_port();
+        log.push_back("listening");
+
+        auto server = co_await listener.accept();
+        if (!server)
+            co_return;
+
+        auto buffer = std::vector<std::byte>(16);
+        auto recv_res = co_await server->recv(buffer);
+        if (!recv_res)
+            co_return;
+
+        received = from_bytes(std::span{buffer}.first(*recv_res));
+        log.push_back("received");
+    }();
+
+    auto client_task = [&]() -> cppx::async::task<void> {
+        auto scope = network.activate();
+        while (port == 0)
+            co_await async_test::delay{1ms};
+
+        auto client = co_await system_test::test_stream::connect("127.0.0.1", port);
+        if (!client)
+            co_return;
+
+        auto sent = co_await client->send(to_bytes("wake"));
+        if (sent)
+            log.push_back("sent");
+    }();
+
+    ex.schedule(server_task.handle());
+    ex.schedule(client_task.handle());
+    ex.advance_until_idle();
+    server_task.result();
+    client_task.result();
+
+    tc.check_eq(received, std::string{"wake"}, "recv wakes after send delivery");
+    tc.check_eq(log[0], std::string{"listening"}, "server binds before traffic");
+    tc.check_eq(log[1], std::string{"sent"}, "client send completes first");
+    tc.check_eq(log[2], std::string{"received"}, "server recv resumes after send");
+    tc.check(ex.current_time() == 40ms,
+             "virtual time tracks connect, accept, send, and recv delays");
+}
+
+// ---- close behavior ------------------------------------------------------
+
+auto close_then_recv(system_test::test_network& network)
+    -> cppx::async::task<bool> {
+    auto scope = network.activate();
+    auto listener_res = co_await system_test::test_listener::bind("127.0.0.1", 0);
+    if (!listener_res)
+        co_return false;
+
+    auto listener = std::move(*listener_res);
+    auto client_res = co_await system_test::test_stream::connect(
+        "127.0.0.1", listener.local_port());
+    if (!client_res)
+        co_return false;
+
+    auto client = std::move(*client_res);
+    auto server_res = co_await listener.accept();
+    if (!server_res)
+        co_return false;
+
+    auto server = std::move(*server_res);
+    client.close();
+
+    auto buffer = std::vector<std::byte>(8);
+    auto recv_res = co_await server.recv(buffer);
+    co_return !recv_res
+        && recv_res.error() == cppx::http::net_error::connection_closed;
+}
+
+void test_close_behavior() {
+    system_test::test_network network;
+    auto closed = async_test::run_test(
+        [&](async_test::test_executor&) -> cppx::async::task<bool> {
+            return close_then_recv(network);
+        });
+    tc.check(closed, "closing one side wakes recv with connection_closed");
+}
 
 int main() {
-#if !defined(__wasi__)
-    test_tcp_roundtrip();
+    test_deterministic_roundtrip();
     test_connect_refused();
-    test_event_loop_stops();
-    test_sleep_for();
-#endif
+    test_bind_failed();
+    test_accept_wakeup();
+    test_recv_wakeup_and_virtual_time();
+    test_close_behavior();
     return tc.summary("cppx.async.system");
 }

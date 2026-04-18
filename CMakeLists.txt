@@ -60,6 +60,7 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.archive.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.system.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.system.cppm
@@ -92,6 +93,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.archive.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.system.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.system.cppm
@@ -349,6 +351,54 @@ if(PROJECT_IS_TOP_LEVEL)
     endif()
 endif()
 exon_copy_windows_asan_runtime(test-async_system)
+
+add_executable(test-async_system_smoke)
+target_sources(test-async_system_smoke PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/async_system_smoke.cpp
+)
+target_link_libraries(test-async_system_smoke PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-async_system_smoke PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-async_system_smoke PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-async_system_smoke PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-async_system_smoke PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-async_system_smoke PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-async_system_smoke)
 
 add_executable(test-async_test)
 target_sources(test-async_test PRIVATE
