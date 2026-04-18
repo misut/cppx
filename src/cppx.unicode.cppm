@@ -306,7 +306,19 @@ inline auto utf16_to_utf8(
     return out;
 }
 
-inline auto utf8_to_wide(
+auto utf8_to_wide(
+        std::string_view value) -> std::expected<std::wstring, unicode_error>;
+
+auto wide_to_utf8(
+        std::wstring_view value) -> std::expected<std::string, unicode_error>;
+
+} // namespace cppx::unicode
+
+module :private;
+
+namespace cppx::unicode {
+
+auto utf8_to_wide(
         std::string_view value) -> std::expected<std::wstring, unicode_error> {
     if constexpr (sizeof(wchar_t) == sizeof(char16_t)) {
         auto utf16 = utf8_to_utf16(value);
@@ -337,7 +349,7 @@ inline auto utf8_to_wide(
     }
 }
 
-inline auto wide_to_utf8(
+auto wide_to_utf8(
         std::wstring_view value) -> std::expected<std::string, unicode_error> {
     if constexpr (sizeof(wchar_t) == sizeof(char16_t)) {
         auto utf16 = std::u16string{};
