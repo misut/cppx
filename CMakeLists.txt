@@ -62,6 +62,7 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.system.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.test.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.boundary.windows.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cppm
@@ -95,6 +96,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.system.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.async.test.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.boundary.windows.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cppm
@@ -118,7 +120,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.unicode.cppm
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.4.0\""
+    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.6.1\""
 )
 
 if(PROJECT_IS_TOP_LEVEL)
@@ -447,6 +449,54 @@ if(PROJECT_IS_TOP_LEVEL)
     endif()
 endif()
 exon_copy_windows_asan_runtime(test-async_test)
+
+add_executable(test-boundary_windows)
+target_sources(test-boundary_windows PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/boundary_windows.cpp
+)
+target_link_libraries(test-boundary_windows PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-boundary_windows PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-boundary_windows PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-boundary_windows PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-boundary_windows PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-boundary_windows PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-boundary_windows)
 
 add_executable(test-checksum)
 target_sources(test-checksum PRIVATE
