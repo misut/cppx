@@ -72,8 +72,7 @@ jobs:
 
       - name: Test
         run: |
-          eval "$(intron env)"
-          exon test
+          intron exec -- exon test
 
   windows:
     timeout-minutes: 15
@@ -133,5 +132,4 @@ jobs:
       - name: Test
         shell: pwsh
         run: |
-          Invoke-Expression ((intron env) -join "`n")
-          exon test
+          intron exec -- exon test

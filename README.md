@@ -209,9 +209,21 @@ configuration requires CMake 3.30+.
 ```sh
 mise install
 intron install
+intron exec -- exon test
+```
+
+If you need a persistent developer shell for repeated manual commands,
+`intron env` is still available as an advanced workflow:
+
+```sh
 eval "$(intron env)"
 exon test
 ```
+
+On Windows PowerShell, run `Invoke-Expression ((intron env) -join "`n")`
+instead of `eval "$(intron env)"`. `intron install` reads this repo's
+`.intron.toml`, so the same flow provisions MSVC on Windows and LLVM on
+macOS/Linux.
 
 ## Using `cppx`
 
