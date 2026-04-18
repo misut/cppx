@@ -975,7 +975,7 @@ auto recv_all(S& s, std::vector<std::byte>& out, std::size_t max_size = 64 * 102
 }
 
 #if defined(_WIN32)
-namespace detail {
+namespace detail::winhttp {
 
 inline constexpr auto default_get_body_limit = std::size_t{64 * 1024 * 1024};
 inline constexpr auto winhttp_redirect_limit = DWORD{5};
@@ -1374,7 +1374,69 @@ inline auto stream_body_to_file(HINTERNET request,
     return {};
 }
 
-} // namespace detail
+inline auto get(std::string_view url, cppx::http::headers extra)
+    -> std::expected<cppx::http::response, cppx::http::http_error>
+{
+    auto target = cppx::http::url::parse(url);
+    if (!target)
+        return std::unexpected(cppx::http::http_error::url_parse_failed);
+
+    auto ctx = build_request_context(*target, extra);
+    if (!ctx)
+        return std::unexpected(ctx.error());
+
+    auto sent = send_and_receive(ctx->request.get());
+    if (!sent)
+        return std::unexpected(sent.error());
+
+    auto resp = make_response_metadata(ctx->request.get());
+    if (!resp)
+        return std::unexpected(resp.error());
+
+    auto read = read_body(
+        ctx->request.get(),
+        resp->body,
+        default_get_body_limit);
+    if (!read)
+        return std::unexpected(read.error());
+
+    return resp;
+}
+
+inline auto download_to(std::string_view url,
+                        std::filesystem::path const& path,
+                        cppx::http::headers extra,
+                        std::size_t max_body)
+    -> std::expected<cppx::http::response, cppx::http::http_error>
+{
+    auto target = cppx::http::url::parse(url);
+    if (!target)
+        return std::unexpected(cppx::http::http_error::url_parse_failed);
+
+    auto ctx = build_request_context(*target, extra);
+    if (!ctx)
+        return std::unexpected(ctx.error());
+
+    auto sent = send_and_receive(ctx->request.get());
+    if (!sent)
+        return std::unexpected(sent.error());
+
+    auto resp = make_response_metadata(ctx->request.get());
+    if (!resp)
+        return std::unexpected(resp.error());
+
+    if (!resp->stat.ok())
+        return resp;
+
+    auto streamed = stream_body_to_file(ctx->request.get(), path, max_body);
+    if (!streamed)
+        return std::unexpected(streamed.error());
+
+    resp->body.clear();
+    return resp;
+}
+
+} // namespace detail::winhttp
 #endif // _WIN32
 
 // Preferred system HTTP facade. Platform-specific HTTP/TLS details stay
@@ -1385,19 +1447,7 @@ public:
         -> std::expected<cppx::http::response, cppx::http::http_error>
     {
 #if defined(_WIN32)
-        auto target = cppx::http::url::parse(url);
-        if (!target)
-            return std::unexpected(cppx::http::http_error::url_parse_failed);
-        auto ctx = detail::build_request_context(*target, extra);
-        if (!ctx) return std::unexpected(ctx.error());
-        auto sent = detail::send_and_receive(ctx->request.get());
-        if (!sent) return std::unexpected(sent.error());
-        auto resp = detail::make_response_metadata(ctx->request.get());
-        if (!resp) return std::unexpected(resp.error());
-        auto read = detail::read_body(ctx->request.get(), resp->body,
-                                      detail::default_get_body_limit);
-        if (!read) return std::unexpected(read.error());
-        return resp;
+        return detail::winhttp::get(url, std::move(extra));
 #else
         return cppx::http::client<stream, tls>{}.get(url, std::move(extra));
 #endif
@@ -1410,22 +1460,11 @@ public:
         -> std::expected<cppx::http::response, cppx::http::http_error>
     {
 #if defined(_WIN32)
-        auto target = cppx::http::url::parse(url);
-        if (!target)
-            return std::unexpected(cppx::http::http_error::url_parse_failed);
-        auto ctx = detail::build_request_context(*target, extra);
-        if (!ctx) return std::unexpected(ctx.error());
-        auto sent = detail::send_and_receive(ctx->request.get());
-        if (!sent) return std::unexpected(sent.error());
-        auto resp = detail::make_response_metadata(ctx->request.get());
-        if (!resp) return std::unexpected(resp.error());
-        if (!resp->stat.ok())
-            return resp;
-        auto streamed = detail::stream_body_to_file(ctx->request.get(),
-                                                    path, max_body);
-        if (!streamed) return std::unexpected(streamed.error());
-        resp->body.clear();
-        return resp;
+        return detail::winhttp::download_to(
+            url,
+            path,
+            std::move(extra),
+            max_body);
 #else
         return cppx::http::client<stream, tls>{}.download_to(
             url, path, std::move(extra), max_body);

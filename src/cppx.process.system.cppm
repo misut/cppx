@@ -1,3 +1,6 @@
+// System process runner. Public wrappers stay tiny while platform
+// spawn/capture details live in dedicated Windows/POSIX helpers below.
+
 module;
 
 #if defined(__APPLE__) || defined(__linux__)
@@ -43,6 +46,8 @@ inline auto normalize_exit_status(int status) noexcept -> int {
 }
 
 #if defined(_WIN32)
+
+namespace windows {
 
 struct capture_pipes {
     HANDLE stdout_read = nullptr;
@@ -398,7 +403,11 @@ inline auto run_process(cppx::process::ProcessSpec const& spec,
     };
 }
 
+} // namespace windows
+
 #elif defined(__APPLE__) || defined(__linux__)
+
+namespace posix {
 
 struct child_failure {
     char stage = 'x';
@@ -703,14 +712,23 @@ inline auto run_process(cppx::process::ProcessSpec const& spec,
     };
 }
 
+} // namespace posix
+
 #else
-
-inline auto run_process(cppx::process::ProcessSpec const&, bool)
-    -> std::expected<completed_process, cppx::process::process_error> {
-    return std::unexpected{cppx::process::process_error::unsupported};
-}
-
 #endif
+
+inline auto run_process(cppx::process::ProcessSpec const& spec, bool capture_output)
+    -> std::expected<completed_process, cppx::process::process_error> {
+#if defined(_WIN32)
+    return windows::run_process(spec, capture_output);
+#elif defined(__APPLE__) || defined(__linux__)
+    return posix::run_process(spec, capture_output);
+#else
+    (void)spec;
+    (void)capture_output;
+    return std::unexpected{cppx::process::process_error::unsupported};
+#endif
+}
 
 } // namespace cppx::process::detail
 

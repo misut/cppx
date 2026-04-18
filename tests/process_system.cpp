@@ -7,6 +7,20 @@ import std;
 
 cppx::test::context tc;
 
+void test_empty_program_is_rejected() {
+    auto run_result = cppx::process::system::run({});
+    tc.check(
+        !run_result &&
+            run_result.error() == cppx::process::process_error::empty_program,
+        "run rejects empty program");
+
+    auto capture_result = cppx::process::system::capture({});
+    tc.check(
+        !capture_result &&
+            capture_result.error() == cppx::process::process_error::empty_program,
+        "capture rejects empty program");
+}
+
 void test_run_preserves_exit_code() {
 #if defined(_WIN32)
     auto result = cppx::process::system::run({
@@ -152,6 +166,7 @@ void test_run_normalizes_signal_exit() {
 #endif
 
 int main() {
+    test_empty_program_is_rejected();
     test_run_preserves_exit_code();
     test_run_honors_cwd();
     test_run_applies_env_overrides();

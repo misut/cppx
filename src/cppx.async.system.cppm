@@ -190,6 +190,184 @@ inline void set_nonblocking(native_socket fd) {
 }
 #endif
 
+struct resolved_addresses {
+    addrinfo* head = nullptr;
+
+    resolved_addresses() = default;
+    explicit resolved_addresses(addrinfo* value) : head{value} {}
+
+    resolved_addresses(resolved_addresses const&) = delete;
+    auto operator=(resolved_addresses const&) -> resolved_addresses& = delete;
+
+    resolved_addresses(resolved_addresses&& other) noexcept
+        : head{std::exchange(other.head, nullptr)} {}
+
+    auto operator=(resolved_addresses&& other) noexcept
+        -> resolved_addresses& {
+        if (this != &other) {
+            if (head)
+                ::freeaddrinfo(head);
+            head = std::exchange(other.head, nullptr);
+        }
+        return *this;
+    }
+
+    ~resolved_addresses() {
+        if (head)
+            ::freeaddrinfo(head);
+    }
+
+    auto get() const -> addrinfo* {
+        return head;
+    }
+};
+
+inline auto resolve_stream_addresses(std::string_view host, std::uint16_t port)
+    -> std::expected<resolved_addresses, cppx::http::net_error> {
+    auto port_string = std::to_string(port);
+    auto host_string = std::string{host};
+
+    struct addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    struct addrinfo* result = nullptr;
+    if (::getaddrinfo(
+            host_string.c_str(),
+            port_string.c_str(),
+            &hints,
+            &result) != 0
+        || !result) {
+        return std::unexpected(cppx::http::net_error::resolve_failed);
+    }
+
+    return resolved_addresses{result};
+}
+
+inline auto resolve_listener_addresses(std::string_view host, std::uint16_t port)
+    -> std::expected<resolved_addresses, cppx::http::net_error> {
+    auto port_string = std::to_string(port);
+    auto host_string = std::string{host};
+
+    struct addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = AI_PASSIVE;
+
+    struct addrinfo* result = nullptr;
+    if (::getaddrinfo(
+            host_string.empty() ? nullptr : host_string.c_str(),
+            port_string.c_str(),
+            &hints,
+            &result) != 0
+        || !result) {
+        return std::unexpected(cppx::http::net_error::resolve_failed);
+    }
+
+    return resolved_addresses{result};
+}
+
+inline auto open_socket(addrinfo const& endpoint,
+                        cppx::http::net_error error)
+    -> std::expected<native_socket, cppx::http::net_error> {
+    auto fd = ::socket(
+        endpoint.ai_family,
+        endpoint.ai_socktype,
+        endpoint.ai_protocol);
+    if (fd == invalid_socket)
+        return std::unexpected(error);
+    return fd;
+}
+
+inline auto connect_socket(native_socket fd, addrinfo const& endpoint) -> int {
+#if defined(_WIN32)
+    return ::connect(
+        fd,
+        endpoint.ai_addr,
+        static_cast<int>(endpoint.ai_addrlen));
+#else
+    return ::connect(fd, endpoint.ai_addr, endpoint.ai_addrlen);
+#endif
+}
+
+inline auto complete_nonblocking_connect(native_socket fd)
+    -> std::expected<void, cppx::http::net_error> {
+    int socket_error = 0;
+#if defined(_WIN32)
+    auto length = static_cast<int>(sizeof(socket_error));
+    ::getsockopt(
+        fd,
+        SOL_SOCKET,
+        SO_ERROR,
+        reinterpret_cast<char*>(&socket_error),
+        &length);
+#else
+    socklen_t length = sizeof(socket_error);
+    ::getsockopt(
+        fd,
+        SOL_SOCKET,
+        SO_ERROR,
+        &socket_error,
+        &length);
+#endif
+    if (socket_error != 0)
+        return std::unexpected(cppx::http::net_error::connect_refused);
+    return {};
+}
+
+inline auto set_reuseaddr(native_socket fd) -> void {
+    auto const reuse = 1;
+#if defined(_WIN32)
+    ::setsockopt(
+        fd,
+        SOL_SOCKET,
+        SO_REUSEADDR,
+        reinterpret_cast<char const*>(&reuse),
+        sizeof(reuse));
+#else
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#endif
+}
+
+inline auto network_to_host_u16(std::uint16_t value) -> std::uint16_t {
+    if constexpr (std::endian::native == std::endian::little)
+        return std::byteswap(value);
+    return value;
+}
+
+inline auto local_port(native_socket fd) -> std::uint16_t {
+    sockaddr_storage address{};
+#if defined(_WIN32)
+    auto length = static_cast<int>(sizeof(address));
+    if (::getsockname(
+            fd,
+            reinterpret_cast<sockaddr*>(&address),
+            &length) != 0) {
+        return 0;
+    }
+#else
+    socklen_t length = sizeof(address);
+    if (::getsockname(
+            fd,
+            reinterpret_cast<sockaddr*>(&address),
+            &length) != 0) {
+        return 0;
+    }
+#endif
+
+    if (address.ss_family == AF_INET) {
+        return network_to_host_u16(
+            reinterpret_cast<sockaddr_in const*>(&address)->sin_port);
+    }
+    if (address.ss_family == AF_INET6) {
+        return network_to_host_u16(
+            reinterpret_cast<sockaddr_in6 const*>(&address)->sin6_port);
+    }
+    return 0;
+}
+
 } // namespace detail
 
 using native_socket = detail::native_socket;
@@ -559,88 +737,51 @@ public:
         -> cppx::async::task<std::expected<async_stream, cppx::http::net_error>> {
         detail::ensure_wsa();
 
-        auto port_string = std::to_string(port);
-        auto host_string = std::string{host};
+        auto endpoints = detail::resolve_stream_addresses(host, port);
+        if (!endpoints)
+            co_return std::unexpected(endpoints.error());
 
-        struct addrinfo hints{};
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_protocol = IPPROTO_TCP;
+        auto fd = detail::open_socket(*endpoints->get(),
+                                      cppx::http::net_error::connect_refused);
+        if (!fd)
+            co_return std::unexpected(fd.error());
 
-        struct addrinfo* result = nullptr;
-        if (::getaddrinfo(
-                host_string.c_str(),
-                port_string.c_str(),
-                &hints,
-                &result) != 0
-            || !result) {
-            co_return std::unexpected(cppx::http::net_error::resolve_failed);
-        }
-
-        auto cleanup = detail::scope_guard([&] {
-            ::freeaddrinfo(result);
-        });
-
-        auto fd = ::socket(
-            result->ai_family,
-            result->ai_socktype,
-            result->ai_protocol);
-        if (fd == detail::invalid_socket)
-            co_return std::unexpected(cppx::http::net_error::connect_refused);
-
-        detail::set_nonblocking(fd);
+        detail::set_nonblocking(*fd);
 
 #if defined(_WIN32)
-        auto const rc = ::connect(
-            fd,
-            result->ai_addr,
-            static_cast<int>(result->ai_addrlen));
+        auto const rc = detail::connect_socket(*fd, *endpoints->get());
         if (rc == SOCKET_ERROR) {
             auto const error = detail::last_socket_error();
             if (!detail::would_block(error)) {
-                detail::close_socket(fd);
+                detail::close_socket(*fd);
                 co_return std::unexpected(cppx::http::net_error::connect_refused);
             }
 
-            co_await wait_writable(fd);
-            int socket_error = 0;
-            auto length = static_cast<int>(sizeof(socket_error));
-            ::getsockopt(
-                fd,
-                SOL_SOCKET,
-                SO_ERROR,
-                reinterpret_cast<char*>(&socket_error),
-                &length);
-            if (socket_error != 0) {
-                detail::close_socket(fd);
+            co_await wait_writable(*fd);
+            auto connected = detail::complete_nonblocking_connect(*fd);
+            if (!connected) {
+                detail::close_socket(*fd);
                 co_return std::unexpected(cppx::http::net_error::connect_refused);
             }
         }
 #else
-        auto const rc = ::connect(fd, result->ai_addr, result->ai_addrlen);
+        auto const rc = detail::connect_socket(*fd, *endpoints->get());
         if (rc < 0) {
             if (errno != EINPROGRESS) {
-                detail::close_socket(fd);
+                detail::close_socket(*fd);
                 co_return std::unexpected(cppx::http::net_error::connect_refused);
             }
 
-            co_await wait_writable(fd);
-            int socket_error = 0;
-            socklen_t length = sizeof(socket_error);
-            ::getsockopt(
-                fd,
-                SOL_SOCKET,
-                SO_ERROR,
-                &socket_error,
-                &length);
-            if (socket_error != 0) {
-                detail::close_socket(fd);
+            co_await wait_writable(*fd);
+            auto connected = detail::complete_nonblocking_connect(*fd);
+            if (!connected) {
+                detail::close_socket(*fd);
                 co_return std::unexpected(cppx::http::net_error::connect_refused);
             }
         }
 #endif
 
-        co_return async_stream{fd};
+        co_return async_stream{*fd};
     }
 
     auto send(std::span<std::byte const> data)
@@ -781,67 +922,36 @@ public:
         -> cppx::async::task<std::expected<async_listener, cppx::http::net_error>> {
         detail::ensure_wsa();
 
-        auto port_string = std::to_string(port);
-        auto host_string = std::string{host};
+        auto endpoints = detail::resolve_listener_addresses(host, port);
+        if (!endpoints)
+            co_return std::unexpected(endpoints.error());
 
-        struct addrinfo hints{};
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_protocol = IPPROTO_TCP;
-        hints.ai_flags = AI_PASSIVE;
+        auto fd = detail::open_socket(*endpoints->get(),
+                                      cppx::http::net_error::bind_failed);
+        if (!fd)
+            co_return std::unexpected(fd.error());
 
-        struct addrinfo* result = nullptr;
-        if (::getaddrinfo(
-                host_string.empty() ? nullptr : host_string.c_str(),
-                port_string.c_str(),
-                &hints,
-                &result) != 0
-            || !result) {
-            co_return std::unexpected(cppx::http::net_error::resolve_failed);
-        }
-
-        auto cleanup = detail::scope_guard([&] {
-            ::freeaddrinfo(result);
-        });
-
-        auto fd = ::socket(
-            result->ai_family,
-            result->ai_socktype,
-            result->ai_protocol);
-        if (fd == detail::invalid_socket)
-            co_return std::unexpected(cppx::http::net_error::bind_failed);
-
-        auto const reuse = 1;
-#if defined(_WIN32)
-        ::setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_REUSEADDR,
-            reinterpret_cast<char const*>(&reuse),
-            sizeof(reuse));
-#else
-        ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-#endif
+        detail::set_reuseaddr(*fd);
 
 #if defined(_WIN32)
         if (::bind(
-                fd,
-                result->ai_addr,
-                static_cast<int>(result->ai_addrlen)) != 0) {
+                *fd,
+                endpoints->get()->ai_addr,
+                static_cast<int>(endpoints->get()->ai_addrlen)) != 0) {
 #else
-        if (::bind(fd, result->ai_addr, result->ai_addrlen) != 0) {
+        if (::bind(*fd, endpoints->get()->ai_addr, endpoints->get()->ai_addrlen) != 0) {
 #endif
-            detail::close_socket(fd);
+            detail::close_socket(*fd);
             co_return std::unexpected(cppx::http::net_error::bind_failed);
         }
 
-        if (::listen(fd, 128) != 0) {
-            detail::close_socket(fd);
+        if (::listen(*fd, 128) != 0) {
+            detail::close_socket(*fd);
             co_return std::unexpected(cppx::http::net_error::bind_failed);
         }
 
-        detail::set_nonblocking(fd);
-        co_return async_listener{fd};
+        detail::set_nonblocking(*fd);
+        co_return async_listener{*fd};
     }
 
     auto accept()
@@ -887,35 +997,7 @@ public:
     }
 
     auto local_port() const -> std::uint16_t {
-#if defined(_WIN32)
-        sockaddr_storage address{};
-        auto length = static_cast<int>(sizeof(address));
-        if (::getsockname(
-                fd_,
-                reinterpret_cast<sockaddr*>(&address),
-                &length) != 0) {
-            return 0;
-        }
-#else
-        sockaddr_storage address{};
-        socklen_t length = sizeof(address);
-        if (::getsockname(
-                fd_,
-                reinterpret_cast<sockaddr*>(&address),
-                &length) != 0) {
-            return 0;
-        }
-#endif
-
-        if (address.ss_family == AF_INET) {
-            return ntohs(
-                reinterpret_cast<sockaddr_in const*>(&address)->sin_port);
-        }
-        if (address.ss_family == AF_INET6) {
-            return ntohs(
-                reinterpret_cast<sockaddr_in6 const*>(&address)->sin6_port);
-        }
-        return 0;
+        return detail::local_port(fd_);
     }
 
 private:

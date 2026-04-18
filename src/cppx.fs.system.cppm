@@ -1,3 +1,6 @@
+// System-backed filesystem helpers for cppx.fs. This is the impure
+// edge where reads, directory creation, and writes touch the host FS.
+
 export module cppx.fs.system;
 import std;
 import cppx.fs;
