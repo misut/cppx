@@ -34,7 +34,7 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.fs` | Filesystem-facing value types such as `TextWrite` and `fs_error`. |
 | `cppx.fs.system` | System-backed text read/write helpers such as `read_text`, `write_if_changed`, and `apply_writes`. |
 | `cppx.resource` | Pure resource classification and path-resolution helpers for filesystem paths and URLs. |
-| `cppx.unicode` | Pure UTF-8/UTF-16/wide-string conversion helpers for platform boundaries. |
+| `cppx.unicode` | Pure UTF-8 boundary helpers plus UTF-16/UTF-8 offset, range, and conversion utilities for platform boundaries. |
 | `cppx.os` | OS-facing capability declarations such as `open_error`. |
 | `cppx.os.system` | System-backed OS helpers such as `open_url`. |
 | `cppx.process` | Process specs/results and `process_error` types for child-process work. |
@@ -136,6 +136,28 @@ int main() {
 }
 ```
 
+### Unicode boundary helpers
+
+```cpp
+import cppx.unicode;
+import std;
+
+int main() {
+    auto caret = cppx::unicode::utf16_offset_to_utf8(
+        "A" "\xF0\x9F\x99\x82" "B", 2);
+    auto marked = cppx::unicode::utf16_range_to_utf8(
+        "A" "\xEC\xB0\xAC" "\xF0\x9F\x99\x82" "B", 1, 3);
+
+    std::println("caret={} marked=[{}, {})",
+                 caret,
+                 marked.start,
+                 marked.end);
+}
+```
+
+Use `import cppx.unicode;` explicitly when platform caret or IME APIs
+report UTF-16 units while your application buffer is stored as UTF-8.
+
 ### URL opening
 
 ```cpp
@@ -229,7 +251,7 @@ Current tests cover:
 - platform detection and wildcard matching
 - pure env helpers and system-backed env lookup
 - filesystem writes, process execution, archive extraction, and checksum helpers
-- resource classification and Unicode boundary conversions
+- resource classification and Unicode boundary/UTF-16 conversion helpers
 - coroutine tasks, generators, scopes, and deterministic virtual-time testing
 - HTTP URL parsing, headers, serialization, incremental parsing, client behavior, server routing, transfer fallback policy, and system networking paths
 - OS URL-opening error paths
