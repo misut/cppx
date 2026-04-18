@@ -34,15 +34,23 @@ void test_classify_paths() {
 void test_kind_helpers() {
     tc.check(cppx::resource::is_url(cppx::resource::resource_kind::https_url),
              "https is a URL");
+    tc.check(cppx::resource::is_url("https://example.com"),
+             "https string is a URL");
     tc.check(!cppx::resource::is_url(
                  cppx::resource::resource_kind::filesystem_path),
              "filesystem path is not a URL");
+    tc.check(!cppx::resource::is_url("assets/logo.png"),
+             "filesystem string is not a URL");
     tc.check(cppx::resource::is_remote(
                  cppx::resource::resource_kind::http_url),
              "http is remote");
+    tc.check(cppx::resource::is_remote("http://example.com"),
+             "http string is remote");
     tc.check(!cppx::resource::is_remote(
                  cppx::resource::resource_kind::other_url),
              "other URLs are not implicitly remote");
+    tc.check(!cppx::resource::is_remote("file:///tmp/report.txt"),
+             "file URL string is not implicitly remote");
 }
 
 void test_resolve_path() {
@@ -57,6 +65,18 @@ void test_resolve_path() {
         std::filesystem::path{"/tmp/image.png"});
     tc.check(absolute == std::filesystem::path{"/tmp/image.png"},
              "preserve absolute path");
+
+    auto from_string = cppx::resource::resolve_path(
+        std::filesystem::path{"/workspace/project"},
+        std::string_view{"assets/../image.png"});
+    tc.check(from_string == std::filesystem::path{"/workspace/project/image.png"},
+             "resolve relative string path against base");
+
+    auto windows_drive = cppx::resource::resolve_path(
+        std::filesystem::path{"/workspace/project"},
+        std::string_view{"C:\\Users\\Alice\\image.png"});
+    tc.check(windows_drive == std::filesystem::path{"C:\\Users\\Alice\\image.png"},
+             "preserve Windows drive path without rebasing");
 }
 
 int main() {

@@ -5,10 +5,13 @@
 export module cppx.http.transfer.system;
 import std;
 import cppx.http;
-import cppx.http.system;
 import cppx.http.transfer;
 import cppx.process;
 import cppx.process.system;
+
+#if !defined(__wasi__)
+import cppx.http.system;
+#endif
 
 namespace cppx::http::transfer::detail {
 
@@ -88,6 +91,17 @@ inline auto combine_primary_and_fallback(error_t const& primary,
 
 namespace cppx_backend {
 
+inline auto unsupported_http(std::string_view operation) -> error_t {
+    return error_t{
+        .code = error_code_t::unsupported,
+        .backend = backend_t::CppxHttp,
+        .message = std::format(
+            "{} is unavailable on wasm32-wasi because cppx.http.system has no socket backend",
+            operation),
+        .fallback_allowed = false,
+    };
+}
+
 inline auto http_failure(std::string_view operation, cppx::http::http_error error)
     -> error_t {
     return error_t{
@@ -114,6 +128,11 @@ inline auto http_status_failure(std::uint16_t status_code) -> error_t {
 
 inline auto get_text(options_t const& options, std::string_view url)
     -> std::expected<text_result_t, error_t> {
+#if defined(__wasi__)
+    (void)options;
+    (void)url;
+    return std::unexpected(unsupported_http("request"));
+#else
     auto response = cppx::http::system::client{}.get(url, options.headers);
     if (!response)
         return std::unexpected(http_failure("request", response.error()));
@@ -123,12 +142,19 @@ inline auto get_text(options_t const& options, std::string_view url)
         .backend = backend_t::CppxHttp,
         .text = response->body_string(),
     };
+#endif
 }
 
 inline auto download_file(options_t const& options,
                           std::string_view url,
                           std::filesystem::path const& path)
     -> std::expected<transfer_result_t, error_t> {
+#if defined(__wasi__)
+    (void)options;
+    (void)url;
+    (void)path;
+    return std::unexpected(unsupported_http("download"));
+#else
     auto prepared = ensure_parent_directory(path);
     if (!prepared)
         return std::unexpected(prepared.error());
@@ -158,6 +184,7 @@ inline auto download_file(options_t const& options,
 
     cleanup_download_target(path);
     return std::unexpected(last_error);
+#endif
 }
 
 } // namespace cppx_backend
