@@ -27,10 +27,42 @@ inline constexpr auto to_string(unicode_error error) -> std::string_view {
     return "invalid_code_point";
 }
 
+struct utf8_range {
+    std::size_t start = 0;
+    std::size_t end = 0;
+};
+
 namespace detail {
 
 inline bool is_continuation(unsigned char byte) {
     return (byte & 0xC0) == 0x80;
+}
+
+inline auto utf8_sequence_length(unsigned char byte) -> std::size_t {
+    if (byte < 0x80)
+        return 1;
+    if (byte >= 0xC2 && byte <= 0xDF)
+        return 2;
+    if (byte >= 0xE0 && byte <= 0xEF)
+        return 3;
+    if (byte >= 0xF0 && byte <= 0xF4)
+        return 4;
+    return 1;
+}
+
+inline auto utf8_sequence_length(
+        std::string_view value,
+        std::size_t offset) -> std::size_t {
+    if (offset >= value.size())
+        return 0;
+    auto const remaining = value.size() - offset;
+    auto const width = utf8_sequence_length(
+        static_cast<unsigned char>(value[offset]));
+    return std::min(width, remaining);
+}
+
+inline auto utf16_units_for_utf8_lead(unsigned char byte) -> std::size_t {
+    return (byte >= 0xF0 && byte <= 0xF4) ? 2u : 1u;
 }
 
 inline auto decode_utf8_code_point(
@@ -125,6 +157,91 @@ inline auto append_utf8(
 }
 
 } // namespace detail
+
+inline auto clamp_utf8_boundary(
+        std::string_view text,
+        std::size_t pos) -> std::size_t {
+    pos = std::min(pos, text.size());
+    while (pos > 0 && pos < text.size()
+           && detail::is_continuation(static_cast<unsigned char>(text[pos]))) {
+        --pos;
+    }
+    return pos;
+}
+
+inline auto prev_utf8_boundary(
+        std::string_view text,
+        std::size_t pos) -> std::size_t {
+    pos = clamp_utf8_boundary(text, pos);
+    if (pos == 0)
+        return 0;
+    --pos;
+    while (pos > 0
+           && detail::is_continuation(static_cast<unsigned char>(text[pos]))) {
+        --pos;
+    }
+    return pos;
+}
+
+inline auto next_utf8_boundary(
+        std::string_view text,
+        std::size_t pos) -> std::size_t {
+    pos = clamp_utf8_boundary(text, pos);
+    if (pos >= text.size())
+        return text.size();
+    ++pos;
+    while (pos < text.size()
+           && detail::is_continuation(static_cast<unsigned char>(text[pos]))) {
+        ++pos;
+    }
+    return pos;
+}
+
+inline auto utf16_length(std::string_view utf8) -> std::size_t {
+    std::size_t units = 0;
+    for (std::size_t offset = 0; offset < utf8.size();) {
+        auto const lead = static_cast<unsigned char>(utf8[offset]);
+        units += detail::utf16_units_for_utf8_lead(lead);
+        offset += detail::utf8_sequence_length(utf8, offset);
+    }
+    return units;
+}
+
+inline auto utf16_offset_to_utf8(
+        std::string_view utf8,
+        std::size_t utf16_units) -> std::size_t {
+    if (utf8.empty() || utf16_units == 0)
+        return 0;
+
+    std::size_t offset = 0;
+    std::size_t units = 0;
+    while (offset < utf8.size()) {
+        auto const lead = static_cast<unsigned char>(utf8[offset]);
+        auto const next_units = units + detail::utf16_units_for_utf8_lead(lead);
+        if (next_units > utf16_units)
+            return offset;
+        units = next_units;
+        offset += detail::utf8_sequence_length(utf8, offset);
+    }
+    return utf8.size();
+}
+
+inline auto utf16_range_to_utf8(
+        std::string_view utf8,
+        std::size_t location,
+        std::size_t length) -> utf8_range {
+    auto const start = utf16_offset_to_utf8(utf8, location);
+    auto end_units = location;
+    if (std::numeric_limits<std::size_t>::max() - end_units < length)
+        end_units = std::numeric_limits<std::size_t>::max();
+    else
+        end_units += length;
+
+    auto end = utf16_offset_to_utf8(utf8, end_units);
+    if (end < start)
+        end = start;
+    return {start, end};
+}
 
 inline auto utf8_to_codepoints(
         std::string_view value) -> std::expected<std::u32string, unicode_error> {
