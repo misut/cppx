@@ -110,38 +110,46 @@ void test_bind_failed() {
 
 // ---- accept wake-up ------------------------------------------------------
 
+auto accept_wakeup_server(
+    system_test::test_network& network,
+    std::vector<std::string>& log,
+    std::uint16_t& port) -> cppx::async::task<void> {
+    auto scope = network.activate();
+    auto listener_res = co_await system_test::test_listener::bind("127.0.0.1", 0);
+    if (!listener_res)
+        co_return;
+
+    auto listener = std::move(*listener_res);
+    port = listener.local_port();
+    log.push_back("listening");
+
+    auto server = co_await listener.accept();
+    if (server)
+        log.push_back("accepted");
+}
+
+auto accept_wakeup_client(
+    system_test::test_network& network,
+    std::vector<std::string>& log,
+    std::uint16_t const& port) -> cppx::async::task<void> {
+    auto scope = network.activate();
+    while (port == 0)
+        co_await async_test::delay{1ms};
+
+    co_await async_test::delay{25ms};
+    auto client = co_await system_test::test_stream::connect("127.0.0.1", port);
+    if (client)
+        log.push_back("connected");
+}
+
 void test_accept_wakeup() {
     system_test::test_network network;
     async_test::test_executor ex;
     std::vector<std::string> log;
     std::uint16_t port = 0;
 
-    auto server_task = [&]() -> cppx::async::task<void> {
-        auto scope = network.activate();
-        auto listener_res =
-            co_await system_test::test_listener::bind("127.0.0.1", 0);
-        if (!listener_res)
-            co_return;
-
-        auto listener = std::move(*listener_res);
-        port = listener.local_port();
-        log.push_back("listening");
-
-        auto server = co_await listener.accept();
-        if (server)
-            log.push_back("accepted");
-    }();
-
-    auto client_task = [&]() -> cppx::async::task<void> {
-        auto scope = network.activate();
-        while (port == 0)
-            co_await async_test::delay{1ms};
-
-        co_await async_test::delay{25ms};
-        auto client = co_await system_test::test_stream::connect("127.0.0.1", port);
-        if (client)
-            log.push_back("connected");
-    }();
+    auto server_task = accept_wakeup_server(network, log, port);
+    auto client_task = accept_wakeup_client(network, log, port);
 
     ex.schedule(server_task.handle());
     ex.schedule(client_task.handle());
@@ -157,6 +165,50 @@ void test_accept_wakeup() {
 
 // ---- recv wake-up + virtual time -----------------------------------------
 
+auto recv_wakeup_server(
+    system_test::test_network& network,
+    std::vector<std::string>& log,
+    std::uint16_t& port,
+    std::string& received) -> cppx::async::task<void> {
+    auto scope = network.activate();
+    auto listener_res = co_await system_test::test_listener::bind("127.0.0.1", 0);
+    if (!listener_res)
+        co_return;
+
+    auto listener = std::move(*listener_res);
+    port = listener.local_port();
+    log.push_back("listening");
+
+    auto server = co_await listener.accept();
+    if (!server)
+        co_return;
+
+    auto buffer = std::vector<std::byte>(16);
+    auto recv_res = co_await server->recv(buffer);
+    if (!recv_res)
+        co_return;
+
+    received = from_bytes(std::span{buffer}.first(*recv_res));
+    log.push_back("received");
+}
+
+auto recv_wakeup_client(
+    system_test::test_network& network,
+    std::vector<std::string>& log,
+    std::uint16_t const& port) -> cppx::async::task<void> {
+    auto scope = network.activate();
+    while (port == 0)
+        co_await async_test::delay{1ms};
+
+    auto client = co_await system_test::test_stream::connect("127.0.0.1", port);
+    if (!client)
+        co_return;
+
+    auto sent = co_await client->send(to_bytes("wake"));
+    if (sent)
+        log.push_back("sent");
+}
+
 void test_recv_wakeup_and_virtual_time() {
     system_test::test_network network;
     network.set_connect_delay(10ms);
@@ -169,43 +221,8 @@ void test_recv_wakeup_and_virtual_time() {
     std::uint16_t port = 0;
     std::string received;
 
-    auto server_task = [&]() -> cppx::async::task<void> {
-        auto scope = network.activate();
-        auto listener_res =
-            co_await system_test::test_listener::bind("127.0.0.1", 0);
-        if (!listener_res)
-            co_return;
-
-        auto listener = std::move(*listener_res);
-        port = listener.local_port();
-        log.push_back("listening");
-
-        auto server = co_await listener.accept();
-        if (!server)
-            co_return;
-
-        auto buffer = std::vector<std::byte>(16);
-        auto recv_res = co_await server->recv(buffer);
-        if (!recv_res)
-            co_return;
-
-        received = from_bytes(std::span{buffer}.first(*recv_res));
-        log.push_back("received");
-    }();
-
-    auto client_task = [&]() -> cppx::async::task<void> {
-        auto scope = network.activate();
-        while (port == 0)
-            co_await async_test::delay{1ms};
-
-        auto client = co_await system_test::test_stream::connect("127.0.0.1", port);
-        if (!client)
-            co_return;
-
-        auto sent = co_await client->send(to_bytes("wake"));
-        if (sent)
-            log.push_back("sent");
-    }();
+    auto server_task = recv_wakeup_server(network, log, port, received);
+    auto client_task = recv_wakeup_client(network, log, port);
 
     ex.schedule(server_task.handle());
     ex.schedule(client_task.handle());
