@@ -72,7 +72,7 @@ jobs:
 
       - name: Test
         run: |
-          intron exec -- exon test
+          intron exec -- "$HOME/.local/bin/exon" test
 
   windows:
     timeout-minutes: 15
@@ -132,4 +132,4 @@ jobs:
       - name: Test
         shell: pwsh
         run: |
-          intron exec -- exon test
+          intron exec -- "$env:USERPROFILE\\.local\\bin\\exon.exe" test
