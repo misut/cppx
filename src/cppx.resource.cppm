@@ -56,9 +56,17 @@ inline bool is_url(resource_kind kind) {
     return kind != resource_kind::filesystem_path;
 }
 
+inline bool is_url(std::string_view value) {
+    return is_url(classify(value));
+}
+
 inline bool is_remote(resource_kind kind) {
     return kind == resource_kind::http_url
         || kind == resource_kind::https_url;
+}
+
+inline bool is_remote(std::string_view value) {
+    return is_remote(classify(value));
 }
 
 inline std::filesystem::path resolve_path(
@@ -67,6 +75,14 @@ inline std::filesystem::path resolve_path(
     if (value.is_absolute())
         return value.lexically_normal();
     return (base / value).lexically_normal();
+}
+
+inline std::filesystem::path resolve_path(
+        std::filesystem::path const& base,
+        std::string_view value) {
+    if (detail::looks_like_windows_drive_path(value))
+        return std::filesystem::path{std::string{value}}.lexically_normal();
+    return resolve_path(base, std::filesystem::path{std::string{value}});
 }
 
 } // namespace cppx::resource
