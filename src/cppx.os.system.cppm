@@ -58,7 +58,15 @@ inline std::expected<void, cppx::os::open_error> spawn_and_wait(
 
 export namespace cppx::os::system {
 
-inline std::expected<void, cppx::os::open_error> open_url(std::string_view url) {
+auto open_url(std::string_view url) -> std::expected<void, cppx::os::open_error>;
+
+} // namespace cppx::os::system
+
+module :private;
+
+namespace cppx::os::system {
+
+auto open_url(std::string_view url) -> std::expected<void, cppx::os::open_error> {
     auto const kind = cppx::resource::classify(url);
     if (!cppx::resource::is_url(kind))
         return std::unexpected{cppx::os::open_error::invalid_target};

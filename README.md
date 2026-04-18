@@ -239,7 +239,7 @@ macOS/Linux.
 
 ```toml
 [dependencies]
-"github.com/misut/cppx" = "1.6.0"
+"github.com/misut/cppx" = "1.6.1"
 ```
 
 ### CMake
@@ -248,7 +248,7 @@ macOS/Linux.
 include(FetchContent)
 FetchContent_Declare(cppx
     GIT_REPOSITORY https://github.com/misut/cppx.git
-    GIT_TAG v1.6.0
+    GIT_TAG v1.6.1
     GIT_SHALLOW ON
 )
 FetchContent_MakeAvailable(cppx)
