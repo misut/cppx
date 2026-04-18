@@ -1,11 +1,29 @@
-// Tests for cppx.async — coroutine primitives: task<T>, task<void>,
-// generator<T>, executor_engine concept, inline_executor.
+// Tests for cppx.async — coroutine primitives and deterministic task driving.
 
 import cppx.async;
+import cppx.async.test;
 import cppx.test;
 import std;
 
 cppx::test::context tc;
+
+template <class F>
+auto run_on_test_executor(F&& fn) {
+    return cppx::async::test::run_test(
+        [fn = std::forward<F>(fn)](cppx::async::test::test_executor&) mutable
+            -> decltype(fn()) {
+            return fn();
+        });
+}
+
+template <class F>
+void run_on_test_executor_void(F&& fn) {
+    cppx::async::test::run_test_void(
+        [fn = std::forward<F>(fn)](cppx::async::test::test_executor&) mutable
+            -> decltype(fn()) {
+            return fn();
+        });
+}
 
 // ---- task<T> basics ------------------------------------------------------
 
@@ -22,23 +40,17 @@ cppx::async::task<void> do_nothing() {
 }
 
 void test_task_int() {
-    auto t = return_42();
-    cppx::async::inline_executor ex;
-    auto val = cppx::async::run(ex, t);
+    auto val = run_on_test_executor(return_42);
     tc.check_eq(val, 42, "task<int> returns 42");
 }
 
 void test_task_string() {
-    auto t = return_hello();
-    cppx::async::inline_executor ex;
-    auto val = cppx::async::run(ex, t);
+    auto val = run_on_test_executor(return_hello);
     tc.check_eq(val, std::string{"hello"}, "task<string> returns hello");
 }
 
 void test_task_void() {
-    auto t = do_nothing();
-    cppx::async::inline_executor ex;
-    cppx::async::run(ex, t); // should not throw
+    run_on_test_executor_void(do_nothing);
     tc.check(true, "task<void> completes");
 }
 
@@ -56,9 +68,7 @@ cppx::async::task<int> chain_tasks() {
 }
 
 void test_task_chaining() {
-    auto t = chain_tasks();
-    cppx::async::inline_executor ex;
-    auto val = cppx::async::run(ex, t);
+    auto val = run_on_test_executor(chain_tasks);
     tc.check_eq(val, 12, "chained tasks: 10 + 1 + 1 = 12");
 }
 
@@ -66,46 +76,46 @@ void test_task_chaining() {
 
 cppx::async::task<int> throw_task() {
     throw std::runtime_error{"task error"};
-    co_return 0; // unreachable
+    co_return 0;
 }
 
 cppx::async::task<int> catch_inner_exception() {
     try {
         auto t = throw_task();
         co_return co_await t;
-    } catch (std::runtime_error const& e) {
+    } catch (std::runtime_error const&) {
         co_return -1;
     }
 }
 
 void test_task_exception_propagation() {
-    auto t = catch_inner_exception();
-    cppx::async::inline_executor ex;
-    auto val = cppx::async::run(ex, t);
+    auto val = run_on_test_executor(catch_inner_exception);
     tc.check_eq(val, -1, "exception propagated through co_await");
 }
 
 void test_task_exception_at_top_level() {
-    auto t = throw_task();
-    cppx::async::inline_executor ex;
     bool caught = false;
     try {
-        cppx::async::run(ex, t);
+        (void)run_on_test_executor(throw_task);
     } catch (std::runtime_error const& e) {
         caught = true;
-        tc.check_eq(std::string_view{e.what()}, std::string_view{"task error"},
+        tc.check_eq(std::string_view{e.what()},
+                    std::string_view{"task error"},
                     "exception message preserved");
     }
-    tc.check(caught, "exception thrown from run()");
+    tc.check(caught, "exception thrown from run_test()");
 }
 
 // ---- task move semantics -------------------------------------------------
 
-void test_task_move() {
+cppx::async::task<int> move_task_result() {
     auto t1 = return_42();
     auto t2 = std::move(t1);
-    cppx::async::inline_executor ex;
-    auto val = cppx::async::run(ex, t2);
+    co_return co_await t2;
+}
+
+void test_task_move() {
+    auto val = run_on_test_executor(move_task_result);
     tc.check_eq(val, 42, "moved task still works");
 }
 
@@ -157,7 +167,9 @@ void test_generator_strings() {
 
 void test_concept_satisfaction() {
     static_assert(cppx::async::executor_engine<cppx::async::inline_executor>);
-    tc.check(true, "inline_executor satisfies executor_engine");
+    static_assert(
+        cppx::async::executor_engine<cppx::async::test::test_executor>);
+    tc.check(true, "inline_executor and test_executor satisfy executor_engine");
 }
 
 // ---- async_scope ---------------------------------------------------------
@@ -177,20 +189,17 @@ cppx::async::task<void> scope_test_coro(int& counter) {
 
 void test_async_scope() {
     int counter = 0;
-    auto t = scope_test_coro(counter);
-    cppx::async::inline_executor ex;
-    cppx::async::run(ex, t);
+    run_on_test_executor_void([&]() {
+        return scope_test_coro(counter);
+    });
     tc.check_eq(counter, 3, "async_scope: 3 spawned tasks completed");
 }
 
 void test_async_scope_empty() {
-    auto coro = []() -> cppx::async::task<void> {
+    run_on_test_executor_void([]() -> cppx::async::task<void> {
         cppx::async::async_scope scope;
-        co_await scope.join(); // no tasks, should return immediately
-    };
-    auto t = coro();
-    cppx::async::inline_executor ex;
-    cppx::async::run(ex, t);
+        co_await scope.join();
+    });
     tc.check(true, "async_scope: empty join completes");
 }
 
@@ -200,34 +209,34 @@ cppx::async::task<int> return_n(int n) {
     co_return n;
 }
 
+cppx::async::task<std::vector<int>> collect_values() {
+    auto tasks = std::vector<cppx::async::task<int>>{};
+    tasks.push_back(return_n(1));
+    tasks.push_back(return_n(2));
+    tasks.push_back(return_n(3));
+    co_return co_await cppx::async::when_all(tasks);
+}
+
 void test_when_all_values() {
-    auto coro = []() -> cppx::async::task<std::vector<int>> {
-        auto tasks = std::vector<cppx::async::task<int>>{};
-        tasks.push_back(return_n(1));
-        tasks.push_back(return_n(2));
-        tasks.push_back(return_n(3));
-        co_return co_await cppx::async::when_all(tasks);
-    };
-    auto t = coro();
-    cppx::async::inline_executor ex;
-    auto vals = cppx::async::run(ex, t);
+    auto vals = run_on_test_executor(collect_values);
     tc.check_eq(static_cast<int>(vals.size()), 3, "when_all: 3 results");
     tc.check_eq(vals[0], 1, "when_all: first");
     tc.check_eq(vals[1], 2, "when_all: second");
     tc.check_eq(vals[2], 3, "when_all: third");
 }
 
+cppx::async::task<void> collect_voids(int& counter) {
+    auto tasks = std::vector<cppx::async::task<void>>{};
+    tasks.push_back(increment(counter));
+    tasks.push_back(increment(counter));
+    co_await cppx::async::when_all(tasks);
+}
+
 void test_when_all_void() {
     int counter = 0;
-    auto coro = [&counter]() -> cppx::async::task<void> {
-        auto tasks = std::vector<cppx::async::task<void>>{};
-        tasks.push_back(increment(counter));
-        tasks.push_back(increment(counter));
-        co_await cppx::async::when_all(tasks);
-    };
-    auto t = coro();
-    cppx::async::inline_executor ex;
-    cppx::async::run(ex, t);
+    run_on_test_executor_void([&]() {
+        return collect_voids(counter);
+    });
     tc.check_eq(counter, 2, "when_all void: 2 tasks completed");
 }
 
