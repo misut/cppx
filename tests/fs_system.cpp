@@ -142,11 +142,34 @@ void test_bytes_path_with_spaces() {
     std::filesystem::remove_all(root);
 }
 
+void test_directory_reads_fail() {
+    auto root = std::filesystem::temp_directory_path() / std::format(
+        "cppx-fs-system-directory-{}",
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    auto directory = root / "nested";
+    std::filesystem::create_directories(directory);
+
+    auto text = cppx::fs::system::read_text(directory);
+    tc.check(!text.has_value(), "read_text rejects directories");
+    if (!text)
+        tc.check(text.error() == cppx::fs::fs_error::read_failed,
+                 "read_text maps directory reads to read_failed");
+
+    auto bytes = cppx::fs::system::read_bytes(directory);
+    tc.check(!bytes.has_value(), "read_bytes rejects directories");
+    if (!bytes)
+        tc.check(bytes.error() == cppx::fs::fs_error::read_failed,
+                 "read_bytes maps directory reads to read_failed");
+
+    std::filesystem::remove_all(root);
+}
+
 int main() {
     test_write_if_changed_and_read_text();
     test_apply_writes();
     test_binary_roundtrip();
     test_append_bytes();
     test_bytes_path_with_spaces();
+    test_directory_reads_fail();
     return tc.summary("cppx.fs.system");
 }
