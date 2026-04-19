@@ -6,7 +6,8 @@ export module cppx.async.system.test;
 
 import cppx.async;
 import cppx.async.test;
-import cppx.http;
+import cppx.net;
+import cppx.net.async;
 import std;
 
 export namespace cppx::async::system::test {
@@ -86,7 +87,7 @@ struct listener_state {
 
 class test_network {
 public:
-    using net_error = cppx::http::net_error;
+    using net_error = cppx::net::net_error;
 
     class activation {
     public:
@@ -204,7 +205,7 @@ auto current_network() noexcept -> test_network* {
 
 class test_stream {
 public:
-    using net_error = cppx::http::net_error;
+    using net_error = cppx::net::net_error;
 
     test_stream() = default;
 
@@ -341,7 +342,7 @@ private:
 
 class test_listener {
 public:
-    using net_error = cppx::http::net_error;
+    using net_error = cppx::net::net_error;
 
     test_listener() = default;
 
@@ -435,7 +436,7 @@ private:
     std::shared_ptr<detail::listener_state> state_;
 };
 
-static_assert(cppx::http::async_stream_engine<test_stream>);
-static_assert(cppx::http::async_listener_engine<test_listener, test_stream>);
+static_assert(cppx::net::async::stream_engine<test_stream>);
+static_assert(cppx::net::async::listener_engine<test_listener, test_stream>);
 
 } // namespace cppx::async::system::test

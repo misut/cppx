@@ -3,7 +3,7 @@
 import cppx.async;
 import cppx.async.test;
 import cppx.async.system.test;
-import cppx.http;
+import cppx.net;
 import cppx.test;
 import std;
 
@@ -79,7 +79,7 @@ auto connect_refused(system_test::test_network& network)
     auto scope = network.activate();
     auto result = co_await system_test::test_stream::connect("127.0.0.1", 9000);
     co_return !result
-        && result.error() == cppx::http::net_error::connect_refused;
+        && result.error() == cppx::net::net_error::connect_refused;
 }
 
 void test_connect_refused() {
@@ -96,7 +96,7 @@ auto bind_failed(system_test::test_network& network)
     auto scope = network.activate();
     network.fail_next_bind();
     auto result = co_await system_test::test_listener::bind("127.0.0.1", 0);
-    co_return !result && result.error() == cppx::http::net_error::bind_failed;
+    co_return !result && result.error() == cppx::net::net_error::bind_failed;
 }
 
 void test_bind_failed() {
@@ -264,7 +264,7 @@ auto close_then_recv(system_test::test_network& network)
     auto buffer = std::vector<std::byte>(8);
     auto recv_res = co_await server.recv(buffer);
     co_return !recv_res
-        && recv_res.error() == cppx::http::net_error::connection_closed;
+        && recv_res.error() == cppx::net::net_error::connection_closed;
 }
 
 void test_close_behavior() {

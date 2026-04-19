@@ -2,7 +2,7 @@
 
 import cppx.async;
 import cppx.async.system;
-import cppx.http;
+import cppx.net;
 import cppx.test;
 import std;
 
@@ -88,7 +88,7 @@ cppx::async::task<void> connect_refused_test(bool& got_error) {
     auto res = co_await cppx::async::system::async_stream::connect(
         "127.0.0.1", 1);
     got_error = !res.has_value()
-        && res.error() == cppx::http::net_error::connect_refused;
+        && res.error() == cppx::net::net_error::connect_refused;
 }
 
 void test_connect_refused() {

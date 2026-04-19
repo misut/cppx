@@ -70,12 +70,16 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.fs.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.fs.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.async.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.async.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.client.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.server.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.transfer.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.transfer.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.net.async.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.net.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.os.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.os.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
@@ -104,12 +108,16 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.fs.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.fs.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.async.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.async.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.client.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.server.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.transfer.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.transfer.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.net.async.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.net.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.os.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.os.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
@@ -834,6 +842,102 @@ if(PROJECT_IS_TOP_LEVEL)
 endif()
 exon_copy_windows_asan_runtime(test-http)
 
+add_executable(test-http_async)
+target_sources(test-http_async PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_async.cpp
+)
+target_link_libraries(test-http_async PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-http_async PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_async PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-http_async PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_async PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-http_async PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-http_async)
+
+add_executable(test-http_async_system)
+target_sources(test-http_async_system PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_async_system.cpp
+)
+target_link_libraries(test-http_async_system PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-http_async_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_async_system PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-http_async_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_async_system PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-http_async_system PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-http_async_system)
+
 add_executable(test-http_client)
 target_sources(test-http_client PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_client.cpp
@@ -1073,6 +1177,54 @@ if(PROJECT_IS_TOP_LEVEL)
     endif()
 endif()
 exon_copy_windows_asan_runtime(test-http_transfer_system)
+
+add_executable(test-net)
+target_sources(test-net PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/net.cpp
+)
+target_link_libraries(test-net PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-net PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-net PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-net PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-net PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-net PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-net)
 
 add_executable(test-os)
 target_sources(test-os PRIVATE

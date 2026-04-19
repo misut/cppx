@@ -43,7 +43,8 @@ export module cppx.async.system;
 #if !defined(__wasi__)
 import std;
 import cppx.async;
-import cppx.http;
+import cppx.net;
+import cppx.net.async;
 
 export namespace cppx::async::system {
 
@@ -119,12 +120,12 @@ inline void set_nonblocking(native_socket fd) {
 }
 
 inline auto create_socket_pair()
-    -> std::expected<std::pair<native_socket, native_socket>, cppx::http::net_error> {
+    -> std::expected<std::pair<native_socket, native_socket>, cppx::net::net_error> {
     ensure_wsa();
 
     auto listener = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (listener == invalid_socket)
-        return std::unexpected(cppx::http::net_error::bind_failed);
+        return std::unexpected(cppx::net::net_error::bind_failed);
 
     auto cleanup_listener = scope_guard([&] {
         close_socket(listener);
@@ -137,27 +138,27 @@ inline auto create_socket_pair()
     address.sin_port = 0;
 
     if (::bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0)
-        return std::unexpected(cppx::http::net_error::bind_failed);
+        return std::unexpected(cppx::net::net_error::bind_failed);
     if (::listen(listener, 1) != 0)
-        return std::unexpected(cppx::http::net_error::bind_failed);
+        return std::unexpected(cppx::net::net_error::bind_failed);
 
     auto length = static_cast<int>(sizeof(address));
     if (::getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length) != 0)
-        return std::unexpected(cppx::http::net_error::bind_failed);
+        return std::unexpected(cppx::net::net_error::bind_failed);
 
     auto writer = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (writer == invalid_socket)
-        return std::unexpected(cppx::http::net_error::connect_refused);
+        return std::unexpected(cppx::net::net_error::connect_refused);
 
     if (::connect(writer, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
         close_socket(writer);
-        return std::unexpected(cppx::http::net_error::connect_refused);
+        return std::unexpected(cppx::net::net_error::connect_refused);
     }
 
     auto reader = ::accept(listener, nullptr, nullptr);
     if (reader == invalid_socket) {
         close_socket(writer);
-        return std::unexpected(cppx::http::net_error::accept_failed);
+        return std::unexpected(cppx::net::net_error::accept_failed);
     }
 
     return std::pair{reader, writer};
@@ -223,7 +224,7 @@ struct resolved_addresses {
 };
 
 inline auto resolve_stream_addresses(std::string_view host, std::uint16_t port)
-    -> std::expected<resolved_addresses, cppx::http::net_error> {
+    -> std::expected<resolved_addresses, cppx::net::net_error> {
     auto port_string = std::to_string(port);
     auto host_string = std::string{host};
 
@@ -239,14 +240,14 @@ inline auto resolve_stream_addresses(std::string_view host, std::uint16_t port)
             &hints,
             &result) != 0
         || !result) {
-        return std::unexpected(cppx::http::net_error::resolve_failed);
+        return std::unexpected(cppx::net::net_error::resolve_failed);
     }
 
     return resolved_addresses{result};
 }
 
 inline auto resolve_listener_addresses(std::string_view host, std::uint16_t port)
-    -> std::expected<resolved_addresses, cppx::http::net_error> {
+    -> std::expected<resolved_addresses, cppx::net::net_error> {
     auto port_string = std::to_string(port);
     auto host_string = std::string{host};
 
@@ -263,15 +264,15 @@ inline auto resolve_listener_addresses(std::string_view host, std::uint16_t port
             &hints,
             &result) != 0
         || !result) {
-        return std::unexpected(cppx::http::net_error::resolve_failed);
+        return std::unexpected(cppx::net::net_error::resolve_failed);
     }
 
     return resolved_addresses{result};
 }
 
 inline auto open_socket(addrinfo const& endpoint,
-                        cppx::http::net_error error)
-    -> std::expected<native_socket, cppx::http::net_error> {
+                        cppx::net::net_error error)
+    -> std::expected<native_socket, cppx::net::net_error> {
     auto fd = ::socket(
         endpoint.ai_family,
         endpoint.ai_socktype,
@@ -293,7 +294,7 @@ inline auto connect_socket(native_socket fd, addrinfo const& endpoint) -> int {
 }
 
 inline auto complete_nonblocking_connect(native_socket fd)
-    -> std::expected<void, cppx::http::net_error> {
+    -> std::expected<void, cppx::net::net_error> {
     int socket_error = 0;
 #if defined(_WIN32)
     auto length = static_cast<int>(sizeof(socket_error));
@@ -313,7 +314,7 @@ inline auto complete_nonblocking_connect(native_socket fd)
         &length);
 #endif
     if (socket_error != 0)
-        return std::unexpected(cppx::http::net_error::connect_refused);
+        return std::unexpected(cppx::net::net_error::connect_refused);
     return {};
 }
 
@@ -734,7 +735,7 @@ public:
     }
 
     static auto connect(std::string_view host, std::uint16_t port)
-        -> cppx::async::task<std::expected<async_stream, cppx::http::net_error>> {
+        -> cppx::async::task<std::expected<async_stream, cppx::net::net_error>> {
         detail::ensure_wsa();
 
         auto endpoints = detail::resolve_stream_addresses(host, port);
@@ -742,7 +743,7 @@ public:
             co_return std::unexpected(endpoints.error());
 
         auto fd = detail::open_socket(*endpoints->get(),
-                                      cppx::http::net_error::connect_refused);
+                                      cppx::net::net_error::connect_refused);
         if (!fd)
             co_return std::unexpected(fd.error());
 
@@ -754,14 +755,14 @@ public:
             auto const error = detail::last_socket_error();
             if (!detail::would_block(error)) {
                 detail::close_socket(*fd);
-                co_return std::unexpected(cppx::http::net_error::connect_refused);
+                co_return std::unexpected(cppx::net::net_error::connect_refused);
             }
 
             co_await wait_writable(*fd);
             auto connected = detail::complete_nonblocking_connect(*fd);
             if (!connected) {
                 detail::close_socket(*fd);
-                co_return std::unexpected(cppx::http::net_error::connect_refused);
+                co_return std::unexpected(cppx::net::net_error::connect_refused);
             }
         }
 #else
@@ -769,14 +770,14 @@ public:
         if (rc < 0) {
             if (errno != EINPROGRESS) {
                 detail::close_socket(*fd);
-                co_return std::unexpected(cppx::http::net_error::connect_refused);
+                co_return std::unexpected(cppx::net::net_error::connect_refused);
             }
 
             co_await wait_writable(*fd);
             auto connected = detail::complete_nonblocking_connect(*fd);
             if (!connected) {
                 detail::close_socket(*fd);
-                co_return std::unexpected(cppx::http::net_error::connect_refused);
+                co_return std::unexpected(cppx::net::net_error::connect_refused);
             }
         }
 #endif
@@ -785,7 +786,7 @@ public:
     }
 
     auto send(std::span<std::byte const> data)
-        -> cppx::async::task<std::expected<std::size_t, cppx::http::net_error>> {
+        -> cppx::async::task<std::expected<std::size_t, cppx::net::net_error>> {
         while (true) {
 #if defined(_WIN32)
             auto const sent = ::send(
@@ -810,12 +811,12 @@ public:
                 continue;
             }
 #endif
-            co_return std::unexpected(cppx::http::net_error::send_failed);
+            co_return std::unexpected(cppx::net::net_error::send_failed);
         }
     }
 
     auto recv(std::span<std::byte> buffer)
-        -> cppx::async::task<std::expected<std::size_t, cppx::http::net_error>> {
+        -> cppx::async::task<std::expected<std::size_t, cppx::net::net_error>> {
         while (true) {
 #if defined(_WIN32)
             auto const received = ::recv(
@@ -826,7 +827,7 @@ public:
             if (received > 0)
                 co_return static_cast<std::size_t>(received);
             if (received == 0)
-                co_return std::unexpected(cppx::http::net_error::connection_closed);
+                co_return std::unexpected(cppx::net::net_error::connection_closed);
 
             if (detail::would_block(detail::last_socket_error())) {
                 co_await wait_readable(fd_);
@@ -837,14 +838,14 @@ public:
             if (received > 0)
                 co_return static_cast<std::size_t>(received);
             if (received == 0)
-                co_return std::unexpected(cppx::http::net_error::connection_closed);
+                co_return std::unexpected(cppx::net::net_error::connection_closed);
 
             if (detail::would_block(errno)) {
                 co_await wait_readable(fd_);
                 continue;
             }
 #endif
-            co_return std::unexpected(cppx::http::net_error::recv_failed);
+            co_return std::unexpected(cppx::net::net_error::recv_failed);
         }
     }
 
@@ -895,7 +896,7 @@ private:
     native_socket fd_ = detail::invalid_socket;
 };
 
-static_assert(cppx::http::async_stream_engine<async_stream>);
+static_assert(cppx::net::async::stream_engine<async_stream>);
 
 class async_listener {
 public:
@@ -919,7 +920,7 @@ public:
     }
 
     static auto bind(std::string_view host, std::uint16_t port)
-        -> cppx::async::task<std::expected<async_listener, cppx::http::net_error>> {
+        -> cppx::async::task<std::expected<async_listener, cppx::net::net_error>> {
         detail::ensure_wsa();
 
         auto endpoints = detail::resolve_listener_addresses(host, port);
@@ -927,7 +928,7 @@ public:
             co_return std::unexpected(endpoints.error());
 
         auto fd = detail::open_socket(*endpoints->get(),
-                                      cppx::http::net_error::bind_failed);
+                                      cppx::net::net_error::bind_failed);
         if (!fd)
             co_return std::unexpected(fd.error());
 
@@ -942,12 +943,12 @@ public:
         if (::bind(*fd, endpoints->get()->ai_addr, endpoints->get()->ai_addrlen) != 0) {
 #endif
             detail::close_socket(*fd);
-            co_return std::unexpected(cppx::http::net_error::bind_failed);
+            co_return std::unexpected(cppx::net::net_error::bind_failed);
         }
 
         if (::listen(*fd, 128) != 0) {
             detail::close_socket(*fd);
-            co_return std::unexpected(cppx::http::net_error::bind_failed);
+            co_return std::unexpected(cppx::net::net_error::bind_failed);
         }
 
         detail::set_nonblocking(*fd);
@@ -955,7 +956,7 @@ public:
     }
 
     auto accept()
-        -> cppx::async::task<std::expected<async_stream, cppx::http::net_error>> {
+        -> cppx::async::task<std::expected<async_stream, cppx::net::net_error>> {
         while (true) {
 #if defined(_WIN32)
             auto client = ::accept(fd_, nullptr, nullptr);
@@ -985,7 +986,7 @@ public:
                 continue;
             }
 #endif
-            co_return std::unexpected(cppx::http::net_error::accept_failed);
+            co_return std::unexpected(cppx::net::net_error::accept_failed);
         }
     }
 
@@ -1025,7 +1026,7 @@ private:
     native_socket fd_ = detail::invalid_socket;
 };
 
-static_assert(cppx::http::async_listener_engine<async_listener, async_stream>);
+static_assert(cppx::net::async::listener_engine<async_listener, async_stream>);
 
 template <class T>
 auto run(cppx::async::task<T>& task) -> T {
