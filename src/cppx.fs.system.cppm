@@ -23,15 +23,29 @@ inline auto ensure_parent_directory(std::filesystem::path const& path)
     return {};
 }
 
-} // namespace detail
-
-inline auto read_text(std::filesystem::path const& path)
-    -> std::expected<std::string, cppx::fs::fs_error> {
+inline auto ensure_regular_file(std::filesystem::path const& path)
+    -> std::expected<void, cppx::fs::fs_error> {
     std::error_code ec;
     if (!std::filesystem::exists(path, ec))
         return std::unexpected{cppx::fs::fs_error::not_found};
     if (ec)
         return std::unexpected{cppx::fs::fs_error::read_failed};
+
+    if (!std::filesystem::is_regular_file(path, ec))
+        return std::unexpected{cppx::fs::fs_error::read_failed};
+    if (ec)
+        return std::unexpected{cppx::fs::fs_error::read_failed};
+
+    return {};
+}
+
+} // namespace detail
+
+inline auto read_text(std::filesystem::path const& path)
+    -> std::expected<std::string, cppx::fs::fs_error> {
+    auto readable = detail::ensure_regular_file(path);
+    if (!readable)
+        return std::unexpected{readable.error()};
 
     auto file = std::ifstream(path, std::ios::binary);
     if (!file)
@@ -45,11 +59,9 @@ inline auto read_text(std::filesystem::path const& path)
 
 inline auto read_bytes(std::filesystem::path const& path)
     -> std::expected<cppx::bytes::byte_buffer, cppx::fs::fs_error> {
-    std::error_code ec;
-    if (!std::filesystem::exists(path, ec))
-        return std::unexpected{cppx::fs::fs_error::not_found};
-    if (ec)
-        return std::unexpected{cppx::fs::fs_error::read_failed};
+    auto readable = detail::ensure_regular_file(path);
+    if (!readable)
+        return std::unexpected{readable.error()};
 
     auto file = std::ifstream(path, std::ios::binary);
     if (!file)
