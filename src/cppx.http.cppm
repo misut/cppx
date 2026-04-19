@@ -3,35 +3,21 @@
 // capabilities (see cppx.http.system for the impure edge).
 
 export module cppx.http;
-import cppx.async;
+import cppx.net;
 import std;
 
 export namespace cppx::http {
 
 // ---- error types ---------------------------------------------------------
 
-enum class net_error {
-    resolve_failed, connect_refused, bind_failed, accept_failed,
-    send_failed, recv_failed, connection_closed, timeout,
-    tls_handshake_failed, tls_read_failed, tls_write_failed,
-};
-
-inline constexpr auto to_string(net_error e) -> std::string_view {
-    switch (e) {
-    case net_error::resolve_failed:        return "resolve_failed";
-    case net_error::connect_refused:       return "connect_refused";
-    case net_error::bind_failed:           return "bind_failed";
-    case net_error::accept_failed:         return "accept_failed";
-    case net_error::send_failed:           return "send_failed";
-    case net_error::recv_failed:           return "recv_failed";
-    case net_error::connection_closed:     return "connection_closed";
-    case net_error::timeout:               return "timeout";
-    case net_error::tls_handshake_failed:  return "tls_handshake_failed";
-    case net_error::tls_read_failed:       return "tls_read_failed";
-    case net_error::tls_write_failed:      return "tls_write_failed";
-    }
-    return "unknown";
-}
+using cppx::net::net_error;
+using cppx::net::to_string;
+using cppx::net::stream_engine;
+using cppx::net::listener_engine;
+using cppx::net::tls_provider;
+using cppx::net::null_stream;
+using cppx::net::null_listener;
+using cppx::net::null_tls;
 
 enum class parse_error {
     incomplete,
@@ -604,157 +590,5 @@ public:
 
     auto finish() && -> request { return std::move(req_); }
 };
-
-// ---- engine concepts -----------------------------------------------------
-
-template <class T>
-concept stream_engine = requires(T s,
-                                 std::string_view host, std::uint16_t port,
-                                 std::span<std::byte const> out,
-                                 std::span<std::byte> in) {
-    { T::connect(host, port) }
-        -> std::same_as<std::expected<T, net_error>>;
-    { s.send(out) } -> std::same_as<std::expected<std::size_t, net_error>>;
-    { s.recv(in)  } -> std::same_as<std::expected<std::size_t, net_error>>;
-    { s.close()   } -> std::same_as<void>;
-};
-
-template <class T, class Stream>
-concept listener_engine = stream_engine<Stream> &&
-    requires(T l, std::string_view host, std::uint16_t port) {
-    { T::bind(host, port) }
-        -> std::same_as<std::expected<T, net_error>>;
-    { l.accept() }
-        -> std::same_as<std::expected<Stream, net_error>>;
-    { l.close() } -> std::same_as<void>;
-};
-
-template <class T, class RawStream>
-concept tls_provider = stream_engine<RawStream> &&
-    requires(T t, RawStream raw, std::string_view hostname) {
-    { t.wrap(std::move(raw), hostname) }
-        -> std::same_as<std::expected<typename T::stream, net_error>>;
-};
-
-// ---- test doubles --------------------------------------------------------
-
-// Null stream that always fails. Useful for compile-time concept
-// checking and as a base for test fakes.
-struct null_stream {
-    static auto connect(std::string_view, std::uint16_t)
-        -> std::expected<null_stream, net_error> {
-        return std::unexpected(net_error::connect_refused);
-    }
-    auto send(std::span<std::byte const>) const
-        -> std::expected<std::size_t, net_error> {
-        return std::unexpected(net_error::send_failed);
-    }
-    auto recv(std::span<std::byte>) const
-        -> std::expected<std::size_t, net_error> {
-        return std::unexpected(net_error::recv_failed);
-    }
-    void close() const {}
-};
-static_assert(stream_engine<null_stream>);
-
-struct null_listener {
-    static auto bind(std::string_view, std::uint16_t)
-        -> std::expected<null_listener, net_error> {
-        return std::unexpected(net_error::bind_failed);
-    }
-    auto accept() const -> std::expected<null_stream, net_error> {
-        return std::unexpected(net_error::accept_failed);
-    }
-    void close() const {}
-};
-static_assert(listener_engine<null_listener, null_stream>);
-
-struct null_tls {
-    using stream = null_stream;
-    auto wrap(null_stream, std::string_view) const
-        -> std::expected<null_stream, net_error> {
-        return std::unexpected(net_error::tls_handshake_failed);
-    }
-};
-static_assert(tls_provider<null_tls, null_stream>);
-
-// ---- async engine concepts -----------------------------------------------
-
-// Async counterparts of the sync engine concepts. Methods return
-// task<expected<...>> so they can be co_awaited. The task<T> type
-// comes from cppx.async.
-
-template <class T>
-concept async_stream_engine = requires(T s,
-                                       std::string_view host, std::uint16_t port,
-                                       std::span<std::byte const> out,
-                                       std::span<std::byte> in) {
-    { T::connect(host, port) }
-        -> std::same_as<cppx::async::task<std::expected<T, net_error>>>;
-    { s.send(out) }
-        -> std::same_as<cppx::async::task<std::expected<std::size_t, net_error>>>;
-    { s.recv(in)  }
-        -> std::same_as<cppx::async::task<std::expected<std::size_t, net_error>>>;
-    { s.close() } -> std::same_as<void>;
-};
-
-template <class T, class Stream>
-concept async_listener_engine = async_stream_engine<Stream> &&
-    requires(T l, std::string_view host, std::uint16_t port) {
-    { T::bind(host, port) }
-        -> std::same_as<cppx::async::task<std::expected<T, net_error>>>;
-    { l.accept() }
-        -> std::same_as<cppx::async::task<std::expected<Stream, net_error>>>;
-    { l.close() } -> std::same_as<void>;
-};
-
-template <class T, class RawStream>
-concept async_tls_provider = async_stream_engine<RawStream> &&
-    requires(T t, RawStream raw, std::string_view hostname) {
-    { t.wrap(std::move(raw), hostname) }
-        -> std::same_as<cppx::async::task<
-               std::expected<typename T::stream, net_error>>>;
-};
-
-// ---- async test doubles --------------------------------------------------
-
-struct async_null_stream {
-    static auto connect(std::string_view, std::uint16_t)
-        -> cppx::async::task<std::expected<async_null_stream, net_error>> {
-        co_return std::unexpected(net_error::connect_refused);
-    }
-    auto send(std::span<std::byte const>) const
-        -> cppx::async::task<std::expected<std::size_t, net_error>> {
-        co_return std::unexpected(net_error::send_failed);
-    }
-    auto recv(std::span<std::byte>) const
-        -> cppx::async::task<std::expected<std::size_t, net_error>> {
-        co_return std::unexpected(net_error::recv_failed);
-    }
-    void close() const {}
-};
-static_assert(async_stream_engine<async_null_stream>);
-
-struct async_null_listener {
-    static auto bind(std::string_view, std::uint16_t)
-        -> cppx::async::task<std::expected<async_null_listener, net_error>> {
-        co_return std::unexpected(net_error::bind_failed);
-    }
-    auto accept() const
-        -> cppx::async::task<std::expected<async_null_stream, net_error>> {
-        co_return std::unexpected(net_error::accept_failed);
-    }
-    void close() const {}
-};
-static_assert(async_listener_engine<async_null_listener, async_null_stream>);
-
-struct async_null_tls {
-    using stream = async_null_stream;
-    auto wrap(async_null_stream, std::string_view) const
-        -> cppx::async::task<std::expected<async_null_stream, net_error>> {
-        co_return std::unexpected(net_error::tls_handshake_failed);
-    }
-};
-static_assert(async_tls_provider<async_null_tls, async_null_stream>);
 
 } // namespace cppx::http

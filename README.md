@@ -44,15 +44,19 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.checksum` | Pure checksum parsing/normalization helpers and error types. |
 | `cppx.checksum.system` | System-backed SHA-256 hashing helpers. |
 | `cppx.async` | Coroutine primitives: `task<T>`, `generator<T>`, `executor_engine`, `run`, `async_scope`, `when_all`. |
+| `cppx.net` | Shared network transport errors, sync stream/listener/TLS concepts, and null helpers. |
+| `cppx.net.async` | Async transport concepts and null helpers built on `cppx.async::task`. |
 | `cppx.async.system` | System event-loop executor, timer awaitables, and networking helpers for async I/O across POSIX and Windows. |
 | `cppx.async.test` | Deterministic coroutine test executor with virtual time. |
 | `cppx.async.system.test` | Scripted in-memory async listener/stream fakes for deterministic system-layer tests. |
 | `cppx.test` | Minimal test helpers for standalone executables. |
 | `cppx.http` | Core HTTP types, serializer, parser, concepts, and helpers. |
+| `cppx.http.async` | Generic async HTTP client over pluggable async stream/TLS backends. |
 | `cppx.http.client` | Generic HTTP client over pluggable stream/TLS backends. |
 | `cppx.http.server` | Generic HTTP server, routing, static file serving, MIME helpers. |
 | `cppx.http.transfer` | Transfer backend policy, result types, and fallback rules. |
 | `cppx.http.system` | Platform-backed sockets/TLS plus convenience helpers like `get` and `download`. |
+| `cppx.http.async.system` | First-party async HTTP facade over `cppx.async.system` for plain `http://` requests. |
 | `cppx.http.transfer.system` | First-party text/file transfer facade with bounded shell fallback. |
 
 ## Quick Start
@@ -101,6 +105,16 @@ as an opt-in smoke run with `CPPX_RUN_ASYNC_SYSTEM_SMOKE=1`.
 `cppx.async.system` now includes a first-party Windows backend, so the same
 module surface stays available across desktop targets.
 
+### Shared transport boundary
+
+```cpp
+import cppx.net;
+import cppx.net.async;
+```
+
+Use `cppx.net` and `cppx.net.async` when you want protocol-independent
+transport concepts or shared `net_error` handling outside the HTTP layer.
+
 ### HTTP client
 
 ```cpp
@@ -124,6 +138,24 @@ int main() {
 `cppx::http::system::get`, `download`, and `system::client` are the
 preferred first-party HTTP entrypoints. Platform transport details stay
 behind that facade, including WinHTTP-backed requests on Windows.
+
+### Async HTTP client
+
+```cpp
+import cppx.async.system;
+import cppx.http.async.system;
+import std;
+
+cppx::async::task<int> fetch_demo() {
+    auto resp = co_await cppx::http::async::system::get(
+        "http://example.com/health");
+    co_return resp && resp->stat.ok() ? 0 : 1;
+}
+```
+
+`cppx.http.async` is the generic async client surface. In this first pass,
+`cppx.http.async.system` is intentionally plain-HTTP-only; use
+`cppx.http.system` for first-party HTTPS today.
 
 ### Download with backend fallback
 
@@ -261,7 +293,7 @@ target_link_libraries(your_target PRIVATE cppx)
 - Field-name extraction currently targets Clang and MSVC.
 - Nested aggregates may need an explicit descriptor in higher-level libraries that build on reflection.
 - `import cppx;` is intentionally small. Filesystem, process, archive, checksum, HTTP, and async modules remain opt-in imports.
-- System modules (`cppx.env.system`, `cppx.fs.system`, `cppx.os.system`, `cppx.process.system`, `cppx.archive.system`, `cppx.checksum.system`, `cppx.async.system`, `cppx.http.system`, `cppx.http.transfer.system`) are the boundary where real OS/network effects occur.
+- System modules (`cppx.env.system`, `cppx.fs.system`, `cppx.os.system`, `cppx.process.system`, `cppx.archive.system`, `cppx.checksum.system`, `cppx.async.system`, `cppx.http.system`, `cppx.http.async.system`, `cppx.http.transfer.system`) are the boundary where real OS/network effects occur.
 
 ## Tested behavior
 
@@ -272,8 +304,9 @@ Current tests cover:
 - pure env helpers and system-backed env lookup
 - filesystem writes, process execution, archive extraction, and checksum helpers
 - resource classification and Unicode boundary/UTF-16 conversion helpers
+- shared sync/async network transport concepts and null helpers
 - coroutine tasks, generators, scopes, and deterministic virtual-time testing
-- HTTP URL parsing, headers, serialization, incremental parsing, client behavior, server routing, transfer fallback policy, and system networking paths
+- HTTP URL parsing, headers, serialization, sync and async client behavior, server routing, transfer fallback policy, and sync/async system networking paths
 - OS URL-opening error paths
 
 ## Repository
