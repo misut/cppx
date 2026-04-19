@@ -5,6 +5,7 @@
 
 import cppx.http;
 import cppx.http.system;
+import cppx.bytes;
 import cppx.test;
 import std;
 
@@ -47,10 +48,8 @@ void test_tcp_roundtrip() {
         if (!stream) return;
 
         // Send payload
-        auto bytes = std::vector<std::byte>{};
-        for (auto c : payload)
-            bytes.push_back(static_cast<std::byte>(c));
-        auto sr = cppx::http::system::send_all(*stream, bytes);
+        auto bytes = cppx::http::as_bytes(payload);
+        auto sr = cppx::http::system::send_all(*stream, bytes.view());
         if (!sr) return;
 
         // Close write side to signal EOF
@@ -64,7 +63,7 @@ void test_tcp_roundtrip() {
     if (!conn) return;
 
     // Read all data
-    auto buf = std::vector<std::byte>{};
+    auto buf = cppx::bytes::byte_buffer{};
     auto rr = cppx::http::system::recv_all(*conn, buf);
     tc.check(rr.has_value(), "recv_all succeeded");
 

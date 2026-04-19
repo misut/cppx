@@ -5,6 +5,7 @@
 import cppx.http;
 import cppx.http.server;
 import cppx.http.system;
+import cppx.bytes;
 import cppx.test;
 import std;
 
@@ -104,7 +105,8 @@ void test_static_file_serving() {
             cppx::http::response resp;
             resp.stat = {200};
             resp.hdrs.set("content-type", cppx::http::mime_type(ext));
-            resp.body = std::move(body);
+            resp.body = cppx::bytes::byte_buffer{
+                cppx::bytes::bytes_view{body.data(), body.size()}};
             return resp;
         };
 

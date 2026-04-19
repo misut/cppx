@@ -54,6 +54,7 @@ export module cppx.http.system;
 // TLS). On wasm32-wasi there is no socket API, so the module compiles as
 // an empty stub — callers should not import it on that target.
 #if !defined(__wasi__)
+import cppx.bytes;
 import std;
 import cppx.http;
 import cppx.http.client;
@@ -949,18 +950,20 @@ using tls = schannel_tls;
 // =========================================================================
 
 template <cppx::http::stream_engine S>
-auto send_all(S& s, std::span<std::byte const> data)
+auto send_all(S& s, cppx::bytes::bytes_view data)
     -> std::expected<void, cppx::http::net_error> {
     while (!data.empty()) {
-        auto n = s.send(data);
+        auto n = s.send(std::span{data.data(), data.size()});
         if (!n) return std::unexpected(n.error());
-        data = data.subspan(*n);
+        data = data.subview(*n);
     }
     return {};
 }
 
 template <cppx::http::stream_engine S>
-auto recv_all(S& s, std::vector<std::byte>& out, std::size_t max_size = 64 * 1024 * 1024)
+auto recv_all(S& s,
+              cppx::bytes::byte_buffer& out,
+              std::size_t max_size = 64 * 1024 * 1024)
     -> std::expected<void, cppx::http::net_error> {
     auto buf = std::array<std::byte, 8192>{};
     while (out.size() < max_size) {
@@ -969,7 +972,7 @@ auto recv_all(S& s, std::vector<std::byte>& out, std::size_t max_size = 64 * 102
             if (n.error() == cppx::http::net_error::connection_closed) return {};
             return std::unexpected(n.error());
         }
-        out.insert(out.end(), buf.begin(), buf.begin() + *n);
+        out.append(cppx::bytes::bytes_view{buf.data(), *n});
     }
     return {};
 }
@@ -1283,7 +1286,7 @@ inline auto build_request_context(cppx::http::url const& target,
 }
 
 inline auto read_body(HINTERNET request,
-                      std::vector<std::byte>& body,
+                      cppx::bytes::byte_buffer& body,
                       std::size_t max_body)
     -> std::expected<void, cppx::http::http_error>
 {
@@ -1299,7 +1302,7 @@ inline auto read_body(HINTERNET request,
             return {};
         if (total + read > max_body)
             return std::unexpected(cppx::http::http_error::body_too_large);
-        body.insert(body.end(), buf.begin(), buf.begin() + read);
+        body.append(cppx::bytes::bytes_view{buf.data(), read});
         total += read;
     }
 }
@@ -1432,7 +1435,7 @@ inline auto download_to(std::string_view url,
     if (!streamed)
         return std::unexpected(streamed.error());
 
-    resp->body.clear();
+    resp->body = {};
     return resp;
 }
 
