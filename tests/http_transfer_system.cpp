@@ -135,7 +135,7 @@ void test_download_file_uses_cppx_http_without_fallback_on_http_404() {
     auto result = cppx::http::transfer::system::download_file(
         std::format("http://127.0.0.1:{}/missing", listener->local_port()),
         output,
-        {.backend = cppx::http::transfer::TransferBackend::Auto});
+        {.backend = cppx::http::transfer::TransferBackend::CppxHttp});
 
     tc.check(!result, "download 404 result surfaced as error");
     if (!result) {
