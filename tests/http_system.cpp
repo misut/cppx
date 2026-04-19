@@ -16,6 +16,18 @@ auto http_test_user_agent() -> cppx::http::headers {
     return hdrs;
 }
 
+auto parse_content_length(std::string_view value) -> std::optional<std::size_t> {
+    if (value.empty())
+        return std::nullopt;
+    std::size_t length = 0;
+    for (auto ch : value) {
+        if (ch < '0' || ch > '9')
+            return std::nullopt;
+        length = length * 10 + static_cast<std::size_t>(ch - '0');
+    }
+    return length;
+}
+
 void test_tcp_roundtrip() {
     // Bind listener on ephemeral port
     auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
@@ -86,6 +98,25 @@ void test_dns_resolution() {
 }
 
 void test_https_get() {
+#if defined(__APPLE__)
+    auto resp = cppx::http::system::get(
+        "https://raw.githubusercontent.com/misut/phenotype/main/examples/native/assets/showcase.bmp",
+        http_test_user_agent());
+    tc.check(resp.has_value(), "HTTPS GET succeeds");
+    if (resp) {
+        tc.check(resp->stat.code == 200, "HTTPS status 200");
+        tc.check(!resp->body.empty(), "HTTPS body non-empty");
+        auto content_length = resp->hdrs.get("content-length");
+        tc.check(content_length.has_value(), "macOS HTTPS GET has content-length");
+        if (content_length) {
+            auto parsed = parse_content_length(*content_length);
+            tc.check(parsed.has_value(), "content-length parses as a number");
+            if (parsed)
+                tc.check(resp->body.size() == *parsed,
+                      "GitHub asset body size matches content-length");
+        }
+    }
+#else
     auto resp = cppx::http::system::get(
         "https://www.google.com/robots.txt", http_test_user_agent());
     tc.check(resp.has_value(), "HTTPS GET succeeds");
@@ -95,6 +126,7 @@ void test_https_get() {
         tc.check(resp->body_string().contains("User-agent"),
               "robots.txt contains User-agent");
     }
+#endif
 }
 
 void test_https_download() {

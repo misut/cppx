@@ -569,6 +569,24 @@ void test_download_to_content_length_tail_read() {
     std::filesystem::remove(path.string() + ".part");
 }
 
+void test_get_content_length_tail_read() {
+    auto body = std::string(9000, 'x');
+    tail_limited_stream::next_response = make_response_bytes(std::format(
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: {}\r\n"
+        "\r\n"
+        "{}",
+        body.size(), body));
+
+    auto c = cppx::http::client<tail_limited_stream, tail_limited_tls>{};
+    auto resp = c.get("http://example.com/file");
+
+    tc.check(resp.has_value(),
+             "GET limits final content-length recv to remaining bytes");
+    tc.check(resp && resp->stat.code == 200, "tail-limited GET status 200");
+    tc.check(resp && resp->body_string() == body, "tail-limited GET body contents");
+}
+
 void test_download_to_redirect() {
     redirect_stream::conn_index = 0;
     redirect_stream::responses = {
@@ -659,6 +677,7 @@ int main() {
     test_download_to_chunked();
     test_download_to_explicit_max_body();
     test_download_to_content_length_tail_read();
+    test_get_content_length_tail_read();
     test_download_to_redirect();
     test_download_to_redirect_large_location();
     return tc.summary("cppx.http.client");

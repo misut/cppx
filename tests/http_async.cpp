@@ -315,6 +315,25 @@ void test_download_tail_limited_stream() {
     std::filesystem::remove(path);
 }
 
+void test_get_tail_limited_stream() {
+    auto body = std::string(9000, 'x');
+    tail_limited_async_stream::next_response = make_response_bytes(std::format(
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: {}\r\n"
+        "\r\n"
+        "{}",
+        body.size(), body));
+
+    auto c = cppx::http::async::client<
+        tail_limited_async_stream,
+        tail_limited_async_tls>{};
+    auto resp = run_task<std::expected<cppx::http::response, cppx::http::http_error>>(
+        [&] { return c.get("http://example.com/file"); });
+
+    tc.check(resp.has_value(), "async GET respects remaining content length");
+    tc.check(resp && resp->body_string() == body, "async GET body contents");
+}
+
 int main() {
     test_get_200();
     test_post();
@@ -323,6 +342,7 @@ int main() {
     test_redirect_followed();
     test_chunked_response();
     test_download_to();
+    test_get_tail_limited_stream();
     test_download_tail_limited_stream();
     return tc.summary("cppx.http.async");
 }
