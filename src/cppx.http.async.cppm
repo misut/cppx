@@ -384,7 +384,9 @@ auto do_exchange(S& stream, request const& req,
     response_parser parser(default_response_header_limit, max_body);
     auto buf = std::array<std::byte, 8192>{};
     for (;;) {
-        auto n = co_await stream.recv(buf);
+        auto recv_span = std::span<std::byte>{buf}.first(
+            parser.preferred_recv_size(buf.size()));
+        auto n = co_await stream.recv(recv_span);
         if (!n) {
             if (n.error() == cppx::net::net_error::connection_closed)
                 co_return std::move(parser).finish();
@@ -396,8 +398,7 @@ auto do_exchange(S& stream, request const& req,
             co_return std::unexpected(http_error::response_parse_failed);
         if (*state == parse_state::complete)
             co_return std::move(parser).finish();
-        if (*state == parse_state::headers_done &&
-            req.verb == method::HEAD)
+        if (req.verb == method::HEAD && parser.headers_parsed())
             co_return std::move(parser).finish();
     }
 }

@@ -383,6 +383,23 @@ public:
                              std::size_t max_body = 64 * 1024 * 1024)
         : max_header_{max_header}, max_body_{max_body} {}
 
+    auto headers_parsed() const -> bool { return headers_parsed_; }
+
+    auto remaining_content_length() const -> std::size_t {
+        if (!headers_parsed_ || chunked_ || content_length_ == 0)
+            return 0;
+        if (buf_.size() >= content_length_)
+            return 0;
+        return content_length_ - buf_.size();
+    }
+
+    auto preferred_recv_size(std::size_t default_size) const -> std::size_t {
+        auto remaining = remaining_content_length();
+        if (remaining == 0)
+            return default_size;
+        return std::min(default_size, remaining);
+    }
+
     auto feed(std::span<std::byte const> chunk)
         -> std::expected<parse_state, parse_error>
     {

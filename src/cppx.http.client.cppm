@@ -390,7 +390,9 @@ auto do_exchange(S& stream, request const& req,
     response_parser parser(default_response_header_limit, max_body);
     auto buf = std::array<std::byte, 8192>{};
     for (;;) {
-        auto n = stream.recv(buf);
+        auto recv_span = std::span<std::byte>{buf}.first(
+            parser.preferred_recv_size(buf.size()));
+        auto n = stream.recv(recv_span);
         if (!n) {
             if (n.error() == net_error::connection_closed) {
                 // Server closed — finalize what we have. This is
@@ -408,8 +410,7 @@ auto do_exchange(S& stream, request const& req,
             return std::move(parser).finish();
         // HEAD responses: headers are parsed but body is never sent.
         // Once headers are done, return immediately.
-        if (*state == parse_state::headers_done &&
-            req.verb == method::HEAD)
+        if (req.verb == method::HEAD && parser.headers_parsed())
             return std::move(parser).finish();
     }
 }
