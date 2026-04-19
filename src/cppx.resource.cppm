@@ -29,18 +29,100 @@ inline bool looks_like_scheme(std::string_view value) {
     return true;
 }
 
+inline auto ascii_lower(char ch) -> char {
+    if (ch >= 'A' && ch <= 'Z')
+        return static_cast<char>(ch - 'A' + 'a');
+    return ch;
+}
+
+inline bool ascii_iequals(std::string_view lhs, std::string_view rhs) {
+    if (lhs.size() != rhs.size())
+        return false;
+
+    for (auto i = std::size_t{0}; i < lhs.size(); ++i) {
+        if (ascii_lower(lhs[i]) != ascii_lower(rhs[i]))
+            return false;
+    }
+    return true;
+}
+
+inline auto hex_value(char ch) -> std::optional<std::uint8_t> {
+    if (ch >= '0' && ch <= '9')
+        return static_cast<std::uint8_t>(ch - '0');
+    if (ch >= 'a' && ch <= 'f')
+        return static_cast<std::uint8_t>(ch - 'a' + 10);
+    if (ch >= 'A' && ch <= 'F')
+        return static_cast<std::uint8_t>(ch - 'A' + 10);
+    return std::nullopt;
+}
+
+inline auto percent_decode(std::string_view value) -> std::optional<std::string> {
+    auto decoded = std::string{};
+    decoded.reserve(value.size());
+
+    for (auto i = std::size_t{0}; i < value.size(); ++i) {
+        if (value[i] != '%') {
+            decoded.push_back(value[i]);
+            continue;
+        }
+
+        if (i + 2 >= value.size())
+            return std::nullopt;
+
+        auto hi = hex_value(value[i + 1]);
+        auto lo = hex_value(value[i + 2]);
+        if (!hi || !lo)
+            return std::nullopt;
+
+        decoded.push_back(static_cast<char>((*hi << 4) | *lo));
+        i += 2;
+    }
+
+    return decoded;
+}
+
+inline auto utf8_path(std::string_view value) -> std::filesystem::path {
+    auto utf8 = std::u8string{};
+    utf8.reserve(value.size());
+    for (auto ch : value)
+        utf8.push_back(static_cast<char8_t>(static_cast<unsigned char>(ch)));
+    return std::filesystem::path{utf8};
+}
+
+inline auto normalize_file_url_path(std::string decoded)
+    -> std::optional<std::filesystem::path> {
+    if (decoded.empty() || !decoded.starts_with('/'))
+        return std::nullopt;
+
+    if (decoded.starts_with("//"))
+        return std::nullopt;
+
+#if defined(_WIN32)
+    if (decoded.size() >= 4
+        && decoded[0] == '/'
+        && looks_like_windows_drive_path(decoded.substr(1))) {
+        decoded.erase(0, 1);
+    }
+#endif
+
+    return utf8_path(decoded).lexically_normal();
+}
+
 } // namespace cppx::resource::detail
 
 export namespace cppx::resource {
 
 enum class resource_kind {
     filesystem_path,
+    file_url,
     http_url,
     https_url,
     other_url,
 };
 
 inline resource_kind classify(std::string_view value) {
+    if (value.starts_with("file:"))
+        return resource_kind::file_url;
     if (value.starts_with("http://"))
         return resource_kind::http_url;
     if (value.starts_with("https://"))
@@ -67,6 +149,37 @@ inline bool is_remote(resource_kind kind) {
 
 inline bool is_remote(std::string_view value) {
     return is_remote(classify(value));
+}
+
+inline auto resolve_file_url(std::string_view locator)
+    -> std::optional<std::filesystem::path> {
+    if (classify(locator) != resource_kind::file_url)
+        return std::nullopt;
+
+    auto remainder = locator.substr(std::string_view{"file:"}.size());
+    auto authority = std::string_view{};
+    auto path_part = remainder;
+
+    if (remainder.starts_with("//")) {
+        auto auth_and_path = remainder.substr(2);
+        auto slash = auth_and_path.find('/');
+        if (slash == std::string_view::npos) {
+            authority = auth_and_path;
+            path_part = {};
+        } else {
+            authority = auth_and_path.substr(0, slash);
+            path_part = auth_and_path.substr(slash);
+        }
+
+        if (!authority.empty() && !detail::ascii_iequals(authority, "localhost"))
+            return std::nullopt;
+    }
+
+    auto decoded = detail::percent_decode(path_part);
+    if (!decoded)
+        return std::nullopt;
+
+    return detail::normalize_file_url_path(std::move(*decoded));
 }
 
 inline std::filesystem::path resolve_path(

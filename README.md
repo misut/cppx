@@ -34,7 +34,8 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.env.system` | System-backed environment/filesystem adapters for `cppx.env`. |
 | `cppx.fs` | Filesystem-facing value types such as `TextWrite` and `fs_error`. |
 | `cppx.fs.system` | System-backed text and byte read/write helpers such as `read_text`, `read_bytes`, `write_bytes`, `append_bytes`, `write_if_changed`, and `apply_writes`. |
-| `cppx.resource` | Pure resource classification and path-resolution helpers for filesystem paths and URLs. |
+| `cppx.resource` | Pure resource classification and resolution helpers for filesystem paths, `file:` URIs, and HTTP(S) locators. |
+| `cppx.resource.system` | System-backed unified byte reads for local paths, local `file:` URIs, and HTTP(S) URLs. |
 | `cppx.unicode` | Pure UTF-8 boundary helpers plus UTF-16/UTF-8 offset, range, and conversion utilities for platform boundaries. |
 | `cppx.os` | OS-facing capability declarations such as `open_error`. |
 | `cppx.os.system` | System-backed OS helpers such as `open_url`. |
@@ -156,6 +157,38 @@ int main() {
     std::println("roundtrip={} bytes", read->size());
 }
 ```
+
+### Unified resource bytes
+
+```cpp
+import cppx.resource.system;
+import std;
+
+int main() {
+    auto local = cppx::resource::system::read_bytes(
+        "/workspace/project",
+        "assets/logo.bin");
+    auto file_uri = cppx::resource::system::read_bytes(
+        "/workspace/project",
+        "file:///workspace/project/assets/logo.bin");
+    auto remote = cppx::resource::system::read_bytes(
+        "/workspace/project",
+        "https://example.com/logo.bin");
+
+    if (!local || !file_uri || !remote)
+        return 1;
+
+    std::println("local={} file={} remote={}",
+                 local->size(),
+                 file_uri->size(),
+                 remote->size());
+}
+```
+
+Use `cppx.resource.system` when you want one narrow read surface that
+accepts relative paths, absolute paths, local `file:` URIs, and remote
+HTTP(S) URLs while keeping filesystem and transport details inside
+`cppx`.
 
 ### HTTP client
 
@@ -345,7 +378,7 @@ Current tests cover:
 - platform detection and wildcard matching
 - pure env helpers and system-backed env lookup
 - filesystem writes, process execution, archive extraction, and checksum helpers
-- resource classification and Unicode boundary/UTF-16 conversion helpers
+- resource classification, unified resource reads, and Unicode boundary/UTF-16 conversion helpers
 - shared sync/async network transport concepts and null helpers
 - coroutine tasks, generators, scopes, and deterministic virtual-time testing
 - HTTP URL parsing, headers, serialization, sync and async client behavior, server routing, transfer fallback policy, and sync/async system networking paths

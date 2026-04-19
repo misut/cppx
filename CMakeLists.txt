@@ -88,6 +88,7 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.process.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.unicode.cppm
 )
@@ -127,6 +128,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.process.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.unicode.cppm
     PROPERTIES COMPILE_DEFINITIONS
@@ -1611,6 +1613,54 @@ if(PROJECT_IS_TOP_LEVEL)
     endif()
 endif()
 exon_copy_windows_asan_runtime(test-resource)
+
+add_executable(test-resource_system)
+target_sources(test-resource_system PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/resource_system.cpp
+)
+target_link_libraries(test-resource_system PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-resource_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-resource_system PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-resource_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-resource_system PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-resource_system PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-resource_system)
 
 add_executable(test-unicode)
 target_sources(test-unicode PRIVATE
