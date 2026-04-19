@@ -4,6 +4,7 @@
 // it's a pure function from request → response, testable without I/O.
 
 export module cppx.http.client;
+import cppx.bytes;
 import std;
 import cppx.http;
 
@@ -12,7 +13,7 @@ export namespace cppx::http {
 namespace detail {
 
 template <stream_engine S>
-auto client_send_all(S& s, std::span<std::byte const> data)
+auto client_send_all(S& s, cppx::bytes::bytes_view data)
     -> std::expected<void, http_error>;
 
 inline auto parse_headers_block(std::string_view block, headers& hdrs)
@@ -140,7 +141,7 @@ auto do_download_exchange(S& stream, request const& req,
     -> std::expected<response, http_error>
 {
     auto wire = serialize(req);
-    auto sr = client_send_all(stream, wire);
+    auto sr = client_send_all(stream, wire.view());
     if (!sr) return std::unexpected(sr.error());
 
     auto buf = std::string{};
@@ -203,7 +204,7 @@ auto do_download_exchange(S& stream, request const& req,
             cleanup();
             return std::unexpected(fin.error());
         }
-        head->res.body.clear();
+        head->res.body = {};
         return std::move(head->res);
     }
 
@@ -267,7 +268,7 @@ auto do_download_exchange(S& stream, request const& req,
                     cleanup();
                     return std::unexpected(fin.error());
                 }
-                head->res.body.clear();
+                head->res.body = {};
                 return std::move(head->res);
             }
 
@@ -323,7 +324,7 @@ auto do_download_exchange(S& stream, request const& req,
             cleanup();
             return std::unexpected(fin.error());
         }
-        head->res.body.clear();
+        head->res.body = {};
         return std::move(head->res);
     }
 
@@ -345,7 +346,7 @@ auto do_download_exchange(S& stream, request const& req,
                     cleanup();
                     return std::unexpected(fin.error());
                 }
-                head->res.body.clear();
+                head->res.body = {};
                 return std::move(head->res);
             }
             cleanup();
@@ -363,13 +364,13 @@ auto do_download_exchange(S& stream, request const& req,
 
 // Send all bytes from a buffer, retrying on partial sends.
 template <stream_engine S>
-auto client_send_all(S& s, std::span<std::byte const> data)
+auto client_send_all(S& s, cppx::bytes::bytes_view data)
     -> std::expected<void, http_error>
 {
     while (!data.empty()) {
-        auto n = s.send(data);
+        auto n = s.send(std::span{data.data(), data.size()});
         if (!n) return std::unexpected(http_error::send_failed);
-        data = data.subspan(*n);
+        data = data.subview(*n);
     }
     return {};
 }
@@ -383,7 +384,7 @@ auto do_exchange(S& stream, request const& req,
 {
     // Serialize and send
     auto wire = serialize(req);
-    auto sr = client_send_all(stream, wire);
+    auto sr = client_send_all(stream, wire.view());
     if (!sr) return std::unexpected(sr.error());
 
     // Receive and parse
@@ -402,7 +403,7 @@ auto do_exchange(S& stream, request const& req,
             }
             return std::unexpected(http_error::response_parse_failed);
         }
-        auto chunk = std::span<std::byte const>{buf.data(), *n};
+        auto chunk = cppx::bytes::bytes_view{buf.data(), *n};
         auto state = parser.feed(chunk);
         if (!state)
             return std::unexpected(http_error::response_parse_failed);
@@ -495,7 +496,7 @@ public:
 
     // Convenience: POST with a body.
     auto post(std::string_view url_str, std::string_view content_type,
-              std::vector<std::byte> body)
+              cppx::bytes::byte_buffer body)
         -> std::expected<response, http_error>
     {
         auto u = url::parse(url_str);

@@ -27,12 +27,13 @@ The library stays close to standard C++23: modules, `std::expected`,
 | Module | Purpose |
 | --- | --- |
 | `cppx` | Umbrella module. Re-exports `cppx.reflect`, `cppx.platform`, `cppx.env`, and `cppx.env.system`. |
+| `cppx.bytes` | Pure byte boundary types: `byte_buffer`, `bytes_view`, and `mutable_bytes_view`. |
 | `cppx.reflect` | Aggregate reflection: `Reflectable`, `tuple_size_v`, `get<I>`, `name_of<T, I>()`. |
 | `cppx.platform` | Compile-time host detection: `OS`, `Arch`, `Platform`, `host()`. |
 | `cppx.env` | Pure environment/path helpers such as `get`, `home_dir`, `find_in_path`, `shell_quote`. |
 | `cppx.env.system` | System-backed environment/filesystem adapters for `cppx.env`. |
 | `cppx.fs` | Filesystem-facing value types such as `TextWrite` and `fs_error`. |
-| `cppx.fs.system` | System-backed text read/write helpers such as `read_text`, `write_if_changed`, and `apply_writes`. |
+| `cppx.fs.system` | System-backed text and byte read/write helpers such as `read_text`, `read_bytes`, `write_bytes`, `append_bytes`, `write_if_changed`, and `apply_writes`. |
 | `cppx.resource` | Pure resource classification and path-resolution helpers for filesystem paths and URLs. |
 | `cppx.unicode` | Pure UTF-8 boundary helpers plus UTF-16/UTF-8 offset, range, and conversion utilities for platform boundaries. |
 | `cppx.os` | OS-facing capability declarations such as `open_error`. |
@@ -114,6 +115,47 @@ import cppx.net.async;
 
 Use `cppx.net` and `cppx.net.async` when you want protocol-independent
 transport concepts or shared `net_error` handling outside the HTTP layer.
+
+### Byte boundary
+
+```cpp
+import cppx.bytes;
+import std;
+
+int main() {
+    auto bytes = cppx::bytes::byte_buffer{};
+    auto raw = std::array{
+        std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF},
+    };
+    bytes.append(cppx::bytes::bytes_view{std::span{raw}});
+
+    std::println("payload={} bytes", bytes.size());
+}
+```
+
+Use `cppx.bytes` when you want a stable binary boundary type without
+passing `std::vector<std::byte>` and raw span/pointer pairs through your
+own public APIs.
+
+### Filesystem bytes
+
+```cpp
+import cppx.bytes;
+import cppx.fs.system;
+import std;
+
+int main() {
+    auto payload = cppx::bytes::byte_buffer{};
+    auto header = std::array{std::byte{0x50}, std::byte{0x4B}};
+    payload.append(cppx::bytes::bytes_view{std::span{header}});
+
+    auto wrote = cppx::fs::system::write_bytes("sample.bin", payload.view());
+    auto read = cppx::fs::system::read_bytes("sample.bin");
+    if (!wrote || !read) return 1;
+
+    std::println("roundtrip={} bytes", read->size());
+}
+```
 
 ### HTTP client
 

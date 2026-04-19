@@ -2,18 +2,19 @@ import cppx.async;
 import cppx.async.test;
 import cppx.http;
 import cppx.http.async;
+import cppx.bytes;
 import cppx.test;
 import std;
 
 cppx::test::context tc;
 
 struct fake_async_stream {
-    inline static std::vector<std::byte> next_response{};
-    inline static std::vector<std::byte> last_sent{};
+    inline static cppx::bytes::byte_buffer next_response{};
+    inline static cppx::bytes::byte_buffer last_sent{};
 
-    std::vector<std::byte> response_data;
+    cppx::bytes::byte_buffer response_data;
     mutable std::size_t recv_pos = 0;
-    mutable std::vector<std::byte> sent;
+    mutable cppx::bytes::byte_buffer sent;
 
     static auto connect(std::string_view, std::uint16_t)
         -> cppx::async::task<std::expected<fake_async_stream, cppx::http::net_error>> {
@@ -24,8 +25,8 @@ struct fake_async_stream {
 
     auto send(std::span<std::byte const> data) const
         -> cppx::async::task<std::expected<std::size_t, cppx::http::net_error>> {
-        sent.insert(sent.end(), data.begin(), data.end());
-        last_sent.insert(last_sent.end(), data.begin(), data.end());
+        sent.append(cppx::bytes::bytes_view{data});
+        last_sent.append(cppx::bytes::bytes_view{data});
         co_return data.size();
     }
 
@@ -34,7 +35,7 @@ struct fake_async_stream {
         if (recv_pos >= response_data.size())
             co_return std::unexpected(cppx::http::net_error::connection_closed);
         auto n = std::min(buf.size(), response_data.size() - recv_pos);
-        std::copy_n(response_data.begin() + recv_pos, n, buf.begin());
+        std::copy_n(response_data.data() + recv_pos, n, buf.data());
         recv_pos += n;
         co_return n;
     }
@@ -75,10 +76,10 @@ struct fail_async_tls {
 };
 
 struct redirect_async_stream {
-    inline static std::vector<std::vector<std::byte>> responses{};
+    inline static std::vector<cppx::bytes::byte_buffer> responses{};
     inline static std::size_t conn_index = 0;
 
-    std::vector<std::byte> response_data;
+    cppx::bytes::byte_buffer response_data;
     mutable std::size_t recv_pos = 0;
 
     static auto connect(std::string_view, std::uint16_t)
@@ -99,7 +100,7 @@ struct redirect_async_stream {
         if (recv_pos >= response_data.size())
             co_return std::unexpected(cppx::http::net_error::connection_closed);
         auto n = std::min(buf.size(), response_data.size() - recv_pos);
-        std::copy_n(response_data.begin() + recv_pos, n, buf.begin());
+        std::copy_n(response_data.data() + recv_pos, n, buf.data());
         recv_pos += n;
         co_return n;
     }
@@ -116,9 +117,9 @@ struct redirect_async_tls {
 };
 
 struct tail_limited_async_stream {
-    inline static std::vector<std::byte> next_response{};
+    inline static cppx::bytes::byte_buffer next_response{};
 
-    std::vector<std::byte> response_data;
+    cppx::bytes::byte_buffer response_data;
     mutable std::size_t recv_pos = 0;
 
     static auto connect(std::string_view, std::uint16_t)
@@ -143,7 +144,7 @@ struct tail_limited_async_stream {
             co_return std::unexpected(cppx::http::net_error::recv_failed);
 
         auto n = std::min(buf.size(), remain);
-        std::copy_n(response_data.begin() + recv_pos, n, buf.begin());
+        std::copy_n(response_data.data() + recv_pos, n, buf.data());
         recv_pos += n;
         co_return n;
     }
@@ -167,7 +168,7 @@ auto run_task(Factory&& factory) -> T {
         });
 }
 
-auto make_response_bytes(std::string_view raw) -> std::vector<std::byte> {
+auto make_response_bytes(std::string_view raw) -> cppx::bytes::byte_buffer {
     return cppx::http::as_bytes(raw);
 }
 

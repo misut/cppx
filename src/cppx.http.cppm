@@ -3,6 +3,7 @@
 // capabilities (see cppx.http.system for the impure edge).
 
 export module cppx.http;
+import cppx.bytes;
 import cppx.net;
 import std;
 
@@ -242,21 +243,32 @@ struct url {
     }
 };
 
+namespace bytes_detail {
+
+inline auto string_bytes(std::string_view text) -> cppx::bytes::bytes_view {
+    return cppx::bytes::bytes_view{
+        std::as_bytes(std::span{text.data(), text.size()})};
+}
+
+} // namespace bytes_detail
+
 // ---- request / response --------------------------------------------------
 
 struct request {
     method verb = method::GET;
     url target;
     headers hdrs;
-    std::vector<std::byte> body;
+    cppx::bytes::byte_buffer body;
 };
 
 struct response {
     status stat;
     headers hdrs;
-    std::vector<std::byte> body;
+    cppx::bytes::byte_buffer body;
 
     auto body_string() const -> std::string {
+        if (body.empty())
+            return {};
         return std::string{
             reinterpret_cast<char const*>(body.data()), body.size()};
     }
@@ -264,7 +276,7 @@ struct response {
 
 // ---- serializer ----------------------------------------------------------
 
-inline auto serialize(request const& req) -> std::vector<std::byte> {
+inline auto serialize(request const& req) -> cppx::bytes::byte_buffer {
     auto line = std::format("{} {}", to_string(req.verb), req.target.path);
     if (!req.target.query.empty())
         line += std::format("?{}", req.target.query);
@@ -292,15 +304,13 @@ inline auto serialize(request const& req) -> std::vector<std::byte> {
 
     out += "\r\n";
 
-    auto bytes = std::vector<std::byte>{};
-    bytes.reserve(out.size() + req.body.size());
-    for (auto c : out)
-        bytes.push_back(static_cast<std::byte>(c));
-    bytes.insert(bytes.end(), req.body.begin(), req.body.end());
+    auto bytes = cppx::bytes::byte_buffer{};
+    bytes.append(bytes_detail::string_bytes(out));
+    bytes.append(req.body.view());
     return bytes;
 }
 
-inline auto serialize(response const& res) -> std::vector<std::byte> {
+inline auto serialize(response const& res) -> cppx::bytes::byte_buffer {
     auto out = std::format("HTTP/1.1 {} {}\r\n",
                            res.stat.code, res.stat.reason());
     for (auto const& [k, v] : res.hdrs)
@@ -309,21 +319,15 @@ inline auto serialize(response const& res) -> std::vector<std::byte> {
         out += std::format("content-length: {}\r\n", res.body.size());
     out += "\r\n";
 
-    auto bytes = std::vector<std::byte>{};
-    bytes.reserve(out.size() + res.body.size());
-    for (auto c : out)
-        bytes.push_back(static_cast<std::byte>(c));
-    bytes.insert(bytes.end(), res.body.begin(), res.body.end());
+    auto bytes = cppx::bytes::byte_buffer{};
+    bytes.append(bytes_detail::string_bytes(out));
+    bytes.append(res.body.view());
     return bytes;
 }
 
 // Helper to create body bytes from string
-inline auto as_bytes(std::string_view s) -> std::vector<std::byte> {
-    auto v = std::vector<std::byte>{};
-    v.reserve(s.size());
-    for (auto c : s)
-        v.push_back(static_cast<std::byte>(c));
-    return v;
+inline auto as_bytes(std::string_view s) -> cppx::bytes::byte_buffer {
+    return cppx::bytes::byte_buffer{bytes_detail::string_bytes(s)};
 }
 
 // ---- incremental parser --------------------------------------------------
@@ -400,10 +404,10 @@ public:
         return std::min(default_size, remaining);
     }
 
-    auto feed(std::span<std::byte const> chunk)
+    auto feed(cppx::bytes::bytes_view chunk)
         -> std::expected<parse_state, parse_error>
     {
-        for (auto b : chunk)
+        for (auto b : std::span{chunk.data(), chunk.size()})
             buf_.push_back(static_cast<char>(b));
 
         if (!headers_parsed_) {
@@ -494,8 +498,7 @@ public:
                     sv = sv.substr(crlf + 2);
                     if (sv.size() < chunk_size + 2) return parse_state::need_more;
                     auto chunk_data = sv.substr(0, chunk_size);
-                    for (auto c : chunk_data)
-                        res_.body.push_back(static_cast<std::byte>(c));
+                    res_.body.append(bytes_detail::string_bytes(chunk_data));
                     sv = sv.substr(chunk_size + 2); // skip chunk data + \r\n
                     if (res_.body.size() > max_body_)
                         return std::unexpected(parse_error::body_too_large);
@@ -507,8 +510,8 @@ public:
 
         // Content-Length mode
         if (buf_.size() >= content_length_) {
-            for (std::size_t i = 0; i < content_length_; ++i)
-                res_.body.push_back(static_cast<std::byte>(buf_[i]));
+            res_.body.append(bytes_detail::string_bytes(
+                std::string_view{buf_}.substr(0, content_length_)));
             return parse_state::complete;
         }
         return parse_state::need_more;
@@ -530,10 +533,10 @@ public:
                             std::size_t max_body = 16 * 1024 * 1024)
         : max_header_{max_header}, max_body_{max_body} {}
 
-    auto feed(std::span<std::byte const> chunk)
+    auto feed(cppx::bytes::bytes_view chunk)
         -> std::expected<parse_state, parse_error>
     {
-        for (auto b : chunk)
+        for (auto b : std::span{chunk.data(), chunk.size()})
             buf_.push_back(static_cast<char>(b));
 
         if (!headers_parsed_) {
@@ -598,8 +601,8 @@ public:
         }
 
         if (buf_.size() >= content_length_) {
-            for (std::size_t i = 0; i < content_length_; ++i)
-                req_.body.push_back(static_cast<std::byte>(buf_[i]));
+            req_.body.append(bytes_detail::string_bytes(
+                std::string_view{buf_}.substr(0, content_length_)));
             return parse_state::complete;
         }
         return parse_state::need_more;

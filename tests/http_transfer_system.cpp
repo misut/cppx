@@ -2,6 +2,7 @@ import cppx.http;
 import cppx.http.system;
 import cppx.http.transfer;
 import cppx.http.transfer.system;
+import cppx.bytes;
 import cppx.test;
 import std;
 
@@ -9,12 +10,8 @@ cppx::test::context tc;
 
 namespace {
 
-auto bytes_from(std::string_view text) -> std::vector<std::byte> {
-    auto bytes = std::vector<std::byte>{};
-    bytes.reserve(text.size());
-    for (auto ch : text)
-        bytes.push_back(static_cast<std::byte>(ch));
-    return bytes;
+auto bytes_from(std::string_view text) -> cppx::bytes::byte_buffer {
+    return cppx::http::as_bytes(text);
 }
 
 void serve_once(cppx::http::system::listener& listener, std::string response) {
@@ -22,7 +19,7 @@ void serve_once(cppx::http::system::listener& listener, std::string response) {
     if (!conn)
         return;
     auto payload = bytes_from(response);
-    auto sent = cppx::http::system::send_all(*conn, payload);
+    auto sent = cppx::http::system::send_all(*conn, payload.view());
     (void)sent;
     conn->close();
 }
@@ -138,7 +135,7 @@ void test_download_file_uses_cppx_http_without_fallback_on_http_404() {
     auto result = cppx::http::transfer::system::download_file(
         std::format("http://127.0.0.1:{}/missing", listener->local_port()),
         output,
-        {.backend = cppx::http::transfer::TransferBackend::Auto});
+        {.backend = cppx::http::transfer::TransferBackend::CppxHttp});
 
     tc.check(!result, "download 404 result surfaced as error");
     if (!result) {

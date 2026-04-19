@@ -3,6 +3,7 @@
 
 import cppx.http;
 import cppx.http.client;
+import cppx.bytes;
 import cppx.test;
 import std;
 
@@ -14,12 +15,12 @@ cppx::test::context tc;
 // connect() always succeeds. sent data is captured for inspection.
 struct fake_stream {
     // Set this before calling client methods to control what recv returns.
-    inline static std::vector<std::byte> next_response{};
-    inline static std::vector<std::byte> last_sent{};
+    inline static cppx::bytes::byte_buffer next_response{};
+    inline static cppx::bytes::byte_buffer last_sent{};
 
-    std::vector<std::byte> response_data;
+    cppx::bytes::byte_buffer response_data;
     mutable std::size_t recv_pos = 0;
-    mutable std::vector<std::byte> sent;
+    mutable cppx::bytes::byte_buffer sent;
 
     static auto connect(std::string_view, std::uint16_t)
         -> std::expected<fake_stream, cppx::http::net_error> {
@@ -30,8 +31,8 @@ struct fake_stream {
 
     auto send(std::span<std::byte const> data) const
         -> std::expected<std::size_t, cppx::http::net_error> {
-        sent.insert(sent.end(), data.begin(), data.end());
-        last_sent.insert(last_sent.end(), data.begin(), data.end());
+        sent.append(cppx::bytes::bytes_view{data});
+        last_sent.append(cppx::bytes::bytes_view{data});
         return data.size();
     }
 
@@ -40,7 +41,7 @@ struct fake_stream {
         if (recv_pos >= response_data.size())
             return std::unexpected(cppx::http::net_error::connection_closed);
         auto n = std::min(buf.size(), response_data.size() - recv_pos);
-        std::copy_n(response_data.begin() + recv_pos, n, buf.begin());
+        std::copy_n(response_data.data() + recv_pos, n, buf.data());
         recv_pos += n;
         return n;
     }
@@ -84,11 +85,11 @@ struct fail_tls {
 
 // ---- helper --------------------------------------------------------------
 
-auto make_response_bytes(std::string_view raw) -> std::vector<std::byte> {
+auto make_response_bytes(std::string_view raw) -> cppx::bytes::byte_buffer {
     return cppx::http::as_bytes(raw);
 }
 
-auto bytes_to_string(std::vector<std::byte> const& bytes) -> std::string {
+auto bytes_to_string(cppx::bytes::bytes_view bytes) -> std::string {
     return std::string{
         reinterpret_cast<char const*>(bytes.data()), bytes.size()};
 }
@@ -239,10 +240,10 @@ void test_head_no_body() {
 
 // Multi-hop redirect stream: returns different responses per connection.
 struct redirect_stream {
-    inline static std::vector<std::vector<std::byte>> responses{};
+    inline static std::vector<cppx::bytes::byte_buffer> responses{};
     inline static std::size_t conn_index = 0;
 
-    std::vector<std::byte> response_data;
+    cppx::bytes::byte_buffer response_data;
     mutable std::size_t recv_pos = 0;
 
     static auto connect(std::string_view, std::uint16_t)
@@ -263,7 +264,7 @@ struct redirect_stream {
         if (recv_pos >= response_data.size())
             return std::unexpected(cppx::http::net_error::connection_closed);
         auto n = std::min(buf.size(), response_data.size() - recv_pos);
-        std::copy_n(response_data.begin() + recv_pos, n, buf.begin());
+        std::copy_n(response_data.data() + recv_pos, n, buf.data());
         recv_pos += n;
         return n;
     }
@@ -284,9 +285,9 @@ struct redirect_tls {
 // hang if the client keeps asking for a full buffer after Content-Length
 // says fewer bytes remain in the body.
 struct tail_limited_stream {
-    inline static std::vector<std::byte> next_response{};
+    inline static cppx::bytes::byte_buffer next_response{};
 
-    std::vector<std::byte> response_data;
+    cppx::bytes::byte_buffer response_data;
     mutable std::size_t recv_pos = 0;
 
     static auto connect(std::string_view, std::uint16_t)
@@ -311,7 +312,7 @@ struct tail_limited_stream {
             return std::unexpected(cppx::http::net_error::recv_failed);
 
         auto n = std::min(buf.size(), remain);
-        std::copy_n(response_data.begin() + recv_pos, n, buf.begin());
+        std::copy_n(response_data.data() + recv_pos, n, buf.data());
         recv_pos += n;
         return n;
     }
@@ -442,7 +443,7 @@ void test_redirect_no_location() {
 }
 
 void test_download_to() {
-    fake_stream::last_sent.clear();
+    fake_stream::last_sent = {};
     fake_stream::next_response = make_response_bytes(
         "HTTP/1.1 200 OK\r\n"
         "Content-Length: 11\r\n"
@@ -471,7 +472,7 @@ void test_download_to() {
 }
 
 void test_download_to_with_headers() {
-    fake_stream::last_sent.clear();
+    fake_stream::last_sent = {};
     fake_stream::next_response = make_response_bytes(
         "HTTP/1.1 200 OK\r\n"
         "Content-Length: 0\r\n"
@@ -486,7 +487,7 @@ void test_download_to_with_headers() {
     auto resp = c.download_to("http://example.com/file", path, std::move(extra));
     tc.check(resp.has_value(), "download_to with headers succeeds");
 
-    auto sent = bytes_to_string(fake_stream::last_sent);
+    auto sent = bytes_to_string(fake_stream::last_sent.view());
     tc.check(sent.contains("user-agent: cppx-test\r\n"), "request contains user-agent");
     tc.check(sent.contains("accept: application/octet-stream\r\n"), "request contains accept");
 
@@ -494,7 +495,7 @@ void test_download_to_with_headers() {
 }
 
 void test_download_to_chunked() {
-    fake_stream::last_sent.clear();
+    fake_stream::last_sent = {};
     fake_stream::next_response = make_response_bytes(
         "HTTP/1.1 200 OK\r\n"
         "Transfer-Encoding: chunked\r\n"
@@ -521,7 +522,7 @@ void test_download_to_chunked() {
 }
 
 void test_download_to_explicit_max_body() {
-    fake_stream::last_sent.clear();
+    fake_stream::last_sent = {};
     fake_stream::next_response = make_response_bytes(
         "HTTP/1.1 200 OK\r\n"
         "Content-Length: 5\r\n"

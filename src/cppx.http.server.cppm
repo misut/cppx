@@ -4,6 +4,7 @@
 // testable without sockets.
 
 export module cppx.http.server;
+import cppx.bytes;
 import std;
 import cppx.http;
 
@@ -54,13 +55,13 @@ inline bool path_matches(std::string_view pattern, std::string_view path) {
 
 // Send all bytes from a buffer, retrying on partial sends.
 template <stream_engine S>
-auto server_send_all(S& s, std::span<std::byte const> data)
+auto server_send_all(S& s, cppx::bytes::bytes_view data)
     -> std::expected<void, net_error>
 {
     while (!data.empty()) {
-        auto n = s.send(data);
+        auto n = s.send(std::span{data.data(), data.size()});
         if (!n) return std::unexpected(n.error());
-        data = data.subspan(*n);
+        data = data.subview(*n);
     }
     return {};
 }
@@ -77,7 +78,7 @@ void handle_connection(Stream conn,
     for (;;) {
         auto n = conn.recv(buf);
         if (!n) return; // client disconnected
-        auto chunk = std::span<std::byte const>{buf.data(), *n};
+        auto chunk = cppx::bytes::bytes_view{buf.data(), *n};
         auto state = parser.feed(chunk);
         if (!state) return; // parse error → drop connection
         if (*state == parse_state::complete) break;
@@ -90,7 +91,8 @@ void handle_connection(Stream conn,
             path_matches(route.pattern, req.target.path)) {
             auto resp = route.handler(req);
             auto wire = serialize(resp);
-            server_send_all(conn, wire);
+            auto sent = server_send_all(conn, wire.view());
+            (void)sent;
             conn.close();
             return;
         }
@@ -99,7 +101,8 @@ void handle_connection(Stream conn,
     // Fallback handler (static files or 404)
     auto resp = fallback(req);
     auto wire = serialize(resp);
-    server_send_all(conn, wire);
+    auto sent = server_send_all(conn, wire.view());
+    (void)sent;
     conn.close();
 }
 
@@ -165,8 +168,8 @@ public:
             if (!in)
                 return {.stat = {500}, .hdrs = {}, .body = as_bytes("Internal Server Error")};
 
-            auto body = std::vector<std::byte>(size);
-            in.read(reinterpret_cast<char*>(body.data()),
+            auto raw = std::vector<std::byte>(size);
+            in.read(reinterpret_cast<char*>(raw.data()),
                     static_cast<std::streamsize>(size));
 
             // MIME type
@@ -176,11 +179,12 @@ public:
             response resp;
             resp.stat = {200};
             resp.hdrs.set("content-type", content_type);
-            resp.hdrs.set("content-length", std::to_string(body.size()));
+            resp.hdrs.set("content-length", std::to_string(raw.size()));
             if (req.verb == method::HEAD)
                 resp.body = {};
             else
-                resp.body = std::move(body);
+                resp.body = cppx::bytes::byte_buffer{
+                    cppx::bytes::bytes_view{raw.data(), raw.size()}};
             return resp;
         };
     }

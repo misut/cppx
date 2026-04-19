@@ -11,6 +11,7 @@ export module cppx.http.async.system;
 #if !defined(__wasi__)
 import cppx.async;
 import cppx.async.system;
+import cppx.bytes;
 import cppx.http;
 import cppx.http.async;
 import cppx.net;
@@ -86,7 +87,7 @@ public:
 
     auto post(std::string_view url,
               std::string_view content_type,
-              std::vector<std::byte> body)
+              cppx::bytes::byte_buffer body)
         -> cppx::async::task<std::expected<cppx::http::response, cppx::http::http_error>>
     {
         auto parsed = detail::parse_plain_http_url(url);

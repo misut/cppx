@@ -2,6 +2,7 @@
 // header operations, request/response serialization, and incremental
 // parser round-trips.
 
+import cppx.bytes;
 import cppx.http;
 import cppx.test;
 import std;
@@ -124,6 +125,22 @@ void test_serialize_request() {
     tc.check(str.contains("\r\n\r\n"), "double CRLF terminator");
 }
 
+void test_request_response_body_surface() {
+    static_assert(std::same_as<decltype(cppx::http::request{}.body),
+                               cppx::bytes::byte_buffer>);
+    static_assert(std::same_as<decltype(cppx::http::response{}.body),
+                               cppx::bytes::byte_buffer>);
+
+    cppx::http::request req;
+    req.body = cppx::http::as_bytes("abc");
+    tc.check(req.body.size() == 3, "request body uses byte_buffer");
+    tc.check(req.body.subview(1, 8).size() == 2, "request body subview clamps");
+
+    cppx::http::response res;
+    res.body = cppx::http::as_bytes("abc");
+    tc.check(res.body_string() == "abc", "response body_string works on byte_buffer");
+}
+
 void test_serialize_response() {
     cppx::http::response res;
     res.stat = {200};
@@ -152,7 +169,7 @@ void test_parse_simple_response() {
 
     cppx::http::response_parser parser;
     auto data = cppx::http::as_bytes(raw);
-    auto state = parser.feed(data);
+    auto state = parser.feed(data.view());
     tc.check(state.has_value() && *state == cppx::http::parse_state::complete,
           "single-feed complete");
 
@@ -169,11 +186,11 @@ void test_parse_incremental_response() {
     auto part2 = std::string{"gth: 5\r\n\r\nhello"};
 
     cppx::http::response_parser parser;
-    auto s1 = parser.feed(cppx::http::as_bytes(part1));
+    auto s1 = parser.feed(cppx::http::as_bytes(part1).view());
     tc.check(s1.has_value() && *s1 == cppx::http::parse_state::need_more,
           "part1 needs more");
 
-    auto s2 = parser.feed(cppx::http::as_bytes(part2));
+    auto s2 = parser.feed(cppx::http::as_bytes(part2).view());
     tc.check(s2.has_value() && *s2 == cppx::http::parse_state::complete,
           "part2 complete");
 
@@ -191,7 +208,7 @@ void test_parse_chunked_response() {
         "0\r\n\r\n"};
 
     cppx::http::response_parser parser;
-    auto state = parser.feed(cppx::http::as_bytes(raw));
+    auto state = parser.feed(cppx::http::as_bytes(raw).view());
     tc.check(state.has_value() && *state == cppx::http::parse_state::complete,
           "chunked complete");
 
@@ -205,7 +222,7 @@ void test_parse_no_body_response() {
         "\r\n"};
 
     cppx::http::response_parser parser;
-    auto state = parser.feed(cppx::http::as_bytes(raw));
+    auto state = parser.feed(cppx::http::as_bytes(raw).view());
     tc.check(state.has_value() && *state == cppx::http::parse_state::complete,
           "204 no body complete");
     auto res = std::move(parser).finish();
@@ -221,7 +238,7 @@ void test_parse_simple_request() {
         "\r\n"};
 
     cppx::http::request_parser parser;
-    auto state = parser.feed(cppx::http::as_bytes(raw));
+    auto state = parser.feed(cppx::http::as_bytes(raw).view());
     tc.check(state.has_value() && *state == cppx::http::parse_state::complete,
           "request parse complete");
 
@@ -241,7 +258,7 @@ void test_parse_request_with_body() {
         "hello world"};
 
     cppx::http::request_parser parser;
-    auto state = parser.feed(cppx::http::as_bytes(raw));
+    auto state = parser.feed(cppx::http::as_bytes(raw).view());
     tc.check(state.has_value() && *state == cppx::http::parse_state::complete,
           "POST parse complete");
 
@@ -259,7 +276,7 @@ void test_parse_request_with_query() {
         "\r\n"};
 
     cppx::http::request_parser parser;
-    auto state = parser.feed(cppx::http::as_bytes(raw));
+    auto state = parser.feed(cppx::http::as_bytes(raw).view());
     tc.check(state.has_value(), "query request parsed");
 
     auto req = std::move(parser).finish();
@@ -279,7 +296,7 @@ void test_serialize_parse_roundtrip() {
     auto bytes = cppx::http::serialize(original);
 
     cppx::http::response_parser parser;
-    auto state = parser.feed(bytes);
+    auto state = parser.feed(bytes.view());
     tc.check(state.has_value() && *state == cppx::http::parse_state::complete,
           "roundtrip parse complete");
 
@@ -313,6 +330,7 @@ int main() {
     test_method_from_string();
     test_status();
     test_serialize_request();
+    test_request_response_body_surface();
     test_serialize_response();
     test_parse_simple_response();
     test_parse_incremental_response();
