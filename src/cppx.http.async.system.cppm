@@ -2,8 +2,13 @@
 // system adapter intentionally supports plain HTTP only; HTTPS remains
 // on the sync cppx.http.system path until an async TLS/backend design
 // is added.
+//
+// On wasm32-wasi there is no async socket backend, so this module
+// compiles as an empty stub and callers should not use it there.
 
 export module cppx.http.async.system;
+
+#if !defined(__wasi__)
 import cppx.async;
 import cppx.async.system;
 import cppx.http;
@@ -145,3 +150,5 @@ inline auto download(std::string_view url,
 }
 
 } // namespace cppx::http::async::system
+
+#endif // !defined(__wasi__)
