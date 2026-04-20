@@ -60,7 +60,7 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.http.transfer` | Transfer backend policy, result types, and fallback rules. |
 | `cppx.http.system` | Platform-backed sockets/TLS plus convenience helpers like `get` and `download`. |
 | `cppx.http.system.test` | Deterministic test double for the first-party sync HTTP facade. |
-| `cppx.http.async.system` | First-party async HTTP facade over `cppx.async.system` for plain `http://` requests. |
+| `cppx.http.async.system` | First-party async HTTP facade over `cppx.async.system` for HTTP(S) requests. |
 | `cppx.http.transfer.system` | First-party text/file transfer facade with bounded shell fallback. |
 
 ## Quick Start
@@ -279,10 +279,9 @@ cppx::async::task<int> fetch_demo() {
 }
 ```
 
-`cppx.http.async` is the generic async client surface. In this first pass,
-`cppx.http.async.system` supports first-party HTTPS on macOS and Linux.
-Windows remains plain-HTTP-only in this pass and still returns `tls_failed`
-for `https://` requests; use `cppx.http.system` there for first-party HTTPS.
+`cppx.http.async` is the generic async client surface.
+`cppx.http.async.system` supports first-party HTTP and HTTPS across
+macOS, Linux, and Windows.
 
 ### Download with backend fallback
 
