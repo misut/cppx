@@ -27,15 +27,6 @@ auto read_text_file(std::filesystem::path const& path) -> std::string {
                        std::istreambuf_iterator<char>()};
 }
 
-#if defined(_WIN32)
-void test_https_rejected() {
-    auto task = cppx::http::async::system::get("https://example.com/");
-    auto resp = cppx::async::system::run(task);
-    tc.check(!resp.has_value(), "async system rejects https on Windows");
-    tc.check(resp.error() == cppx::http::http_error::tls_failed,
-             "async system Windows https error is tls_failed");
-}
-#else
 auto parse_content_length(std::string_view value) -> std::optional<std::size_t> {
     if (value.empty())
         return std::nullopt;
@@ -82,7 +73,7 @@ void test_https_get_smoke() {
     }
 #else
     tc.check(resp->body_string().contains("User-agent"),
-             "async system Linux robots.txt contains User-agent");
+             "async system robots.txt contains User-agent");
 #endif
 }
 
@@ -112,7 +103,6 @@ void test_https_download_smoke() {
         std::filesystem::remove(path);
     }
 }
-#endif
 
 void test_get_smoke() {
     auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
@@ -218,19 +208,14 @@ void test_download_smoke() {
 
 int main() {
 #if !defined(__wasi__)
-#if defined(_WIN32)
-    test_https_rejected();
-#endif
     if (!smoke_enabled()) {
         std::println(
             "cppx.http.async.system smoke skipped (set CPPX_RUN_HTTP_ASYNC_SYSTEM_SMOKE=1 to enable)");
         return tc.summary("cppx.http.async.system");
     }
 
-#if !defined(_WIN32)
     test_https_get_smoke();
     test_https_download_smoke();
-#endif
     test_get_smoke();
     test_download_smoke();
 #endif
