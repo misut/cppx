@@ -86,7 +86,6 @@ private:
 
 template <class Key, class T>
     requires requires(Key const& key) {
-        { std::hash<Key>{}(key) } -> std::convertible_to<std::size_t>;
         { key == key } -> std::convertible_to<bool>;
     }
 class coalescing_queue {
@@ -112,19 +111,16 @@ public:
             return false;
 
         auto queued_key = Key(std::forward<K>(key));
-        auto [it, inserted] = queued_keys_.insert(queued_key);
-        if (!inserted)
+        auto duplicate = std::ranges::any_of(queue_, [&](entry const& queued) {
+            return queued.key == queued_key;
+        });
+        if (duplicate)
             return false;
 
-        try {
-            queue_.push_back(entry{
-                .key = std::move(queued_key),
-                .value = T(std::forward<U>(value)),
-            });
-        } catch (...) {
-            queued_keys_.erase(it);
-            throw;
-        }
+        queue_.push_back(entry{
+            .key = std::move(queued_key),
+            .value = T(std::forward<U>(value)),
+        });
 
         cv_.notify_one();
         return true;
@@ -137,7 +133,6 @@ public:
 
         auto next = std::optional<entry>{
             std::move_if_noexcept(queue_.front())};
-        queued_keys_.erase(next->key);
         queue_.pop_front();
         return next;
     }
@@ -152,7 +147,6 @@ public:
 
         auto next = std::optional<entry>{
             std::move_if_noexcept(queue_.front())};
-        queued_keys_.erase(next->key);
         queue_.pop_front();
         return next;
     }
@@ -186,7 +180,6 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<entry> queue_;
-    std::unordered_set<Key> queued_keys_;
     bool closed_ = false;
 };
 
@@ -209,6 +202,16 @@ public:
         }
 
         auto* shared = state_.get();
+#if defined(__APPLE__)
+        shared->thread = std::thread{
+            [shared, body = std::move(body)]() mutable {
+                try {
+                    body({});
+                } catch (...) {
+                    shared->report_failure(std::current_exception());
+                }
+            }};
+#else
         shared->thread = std::jthread{
             [shared, body = std::move(body)](std::stop_token stop) mutable {
                 try {
@@ -217,6 +220,7 @@ public:
                     shared->report_failure(std::current_exception());
                 }
             }};
+#endif
     }
 
     background_worker(background_worker const&) = delete;
@@ -237,8 +241,14 @@ public:
     }
 
     void request_stop() {
-        if (state_ && state_->thread.joinable())
+        if (!state_ || !state_->thread.joinable())
+            return;
+
+        state_->stop_requested.store(true);
+#if !defined(__APPLE__)
+        if (state_->thread.joinable())
             state_->thread.request_stop();
+#endif
     }
 
     void join() {
@@ -261,8 +271,7 @@ public:
 
         if (!state_->close_started.exchange(true)) {
             state_->run_on_stop();
-            if (state_->thread.joinable())
-                state_->thread.request_stop();
+            request_stop();
         }
 
         join();
@@ -273,7 +282,7 @@ public:
     }
 
     auto stop_requested() const -> bool {
-        return state_ && state_->thread.get_stop_token().stop_requested();
+        return state_ && state_->stop_requested.load();
     }
 
     auto exception() const -> std::exception_ptr {
@@ -330,11 +339,16 @@ private:
         }
 
         mutable std::mutex mutex;
+#if defined(__APPLE__)
+        std::thread thread;
+#else
         std::jthread thread;
+#endif
         std::function<void()> on_stop;
         std::function<void(std::exception_ptr)> on_exception;
         std::exception_ptr failure_ = nullptr;
         std::atomic<bool> close_started = false;
+        std::atomic<bool> stop_requested = false;
     };
 
     std::unique_ptr<state> state_;
