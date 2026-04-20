@@ -280,8 +280,9 @@ cppx::async::task<int> fetch_demo() {
 ```
 
 `cppx.http.async` is the generic async client surface. In this first pass,
-`cppx.http.async.system` is intentionally plain-HTTP-only; use
-`cppx.http.system` for first-party HTTPS today.
+`cppx.http.async.system` supports first-party HTTPS on macOS and Linux.
+Windows remains plain-HTTP-only in this pass and still returns `tls_failed`
+for `https://` requests; use `cppx.http.system` there for first-party HTTPS.
 
 ### Download with backend fallback
 
