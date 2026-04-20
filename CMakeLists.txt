@@ -89,6 +89,7 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.sync.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.unicode.cppm
 )
@@ -129,6 +130,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.sync.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.unicode.cppm
     PROPERTIES COMPILE_DEFINITIONS
@@ -1661,6 +1663,54 @@ if(PROJECT_IS_TOP_LEVEL)
     endif()
 endif()
 exon_copy_windows_asan_runtime(test-resource_system)
+
+add_executable(test-sync)
+target_sources(test-sync PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/sync.cpp
+)
+target_link_libraries(test-sync PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-sync PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-sync PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-sync PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-sync PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-sync PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-sync)
 
 add_executable(test-unicode)
 target_sources(test-unicode PRIVATE
