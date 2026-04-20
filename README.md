@@ -36,6 +36,7 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.fs.system` | System-backed text and byte read/write helpers such as `read_text`, `read_bytes`, `write_bytes`, `append_bytes`, `write_if_changed`, and `apply_writes`. |
 | `cppx.resource` | Pure resource classification and resolution helpers for filesystem paths, `file:` URIs, and HTTP(S) locators. |
 | `cppx.resource.system` | System-backed unified byte reads for local paths, local `file:` URIs, and HTTP(S) URLs. |
+| `cppx.sync` | Thread-based producer/consumer queues plus a reusable single-thread background worker lifecycle wrapper. |
 | `cppx.unicode` | Pure UTF-8 boundary helpers plus UTF-16/UTF-8 offset, range, and conversion utilities for platform boundaries. |
 | `cppx.os` | OS-facing capability declarations such as `open_error`. |
 | `cppx.os.system` | System-backed OS helpers such as `open_url`. |
@@ -189,6 +190,32 @@ Use `cppx.resource.system` when you want one narrow read surface that
 accepts relative paths, absolute paths, local `file:` URIs, and remote
 HTTP(S) URLs while keeping filesystem and transport details inside
 `cppx`.
+
+### Work queues and background worker
+
+```cpp
+import cppx.sync;
+import std;
+
+int main() {
+    cppx::sync::work_queue<int> queue;
+    auto worker = cppx::sync::background_worker{
+        [&](std::stop_token) {
+            while (auto item = queue.wait_pop())
+                std::println("work={}", *item);
+        },
+        {.on_stop = [&] { queue.close(); }},
+    };
+
+    queue.push(7);
+    queue.push(9);
+    worker.close();
+}
+```
+
+Use `cppx.sync` when you want a small reusable queue + worker lifecycle
+surface for background submission, duplicate suppression, and orderly
+shutdown without introducing a scheduler or coroutine runtime.
 
 ### HTTP client
 
@@ -367,7 +394,10 @@ target_link_libraries(your_target PRIVATE cppx)
 - `cppx.reflect` supports aggregate types with up to 24 direct fields.
 - Field-name extraction currently targets Clang and MSVC.
 - Nested aggregates may need an explicit descriptor in higher-level libraries that build on reflection.
-- `import cppx;` is intentionally small. Filesystem, process, archive, checksum, HTTP, and async modules remain opt-in imports.
+- `import cppx;` is intentionally small. Filesystem, process, archive, checksum, HTTP, async, and sync modules remain opt-in imports.
+- `cppx.sync::work_queue<T>` and `cppx.sync::coalescing_queue<Key, T>` drain already-queued work after `close()` and only return `std::nullopt` once the queue is both closed and empty.
+- `cppx.sync::coalescing_queue<Key, T>` suppresses duplicate keys only while an item is still queued. The key is released as soon as the item is popped, not when downstream processing finishes.
+- `cppx.sync::background_worker` is intentionally a thin single-thread lifecycle wrapper. It is not a scheduler, coroutine bridge, thread pool, or generic task-executor layer.
 - System modules (`cppx.env.system`, `cppx.fs.system`, `cppx.os.system`, `cppx.process.system`, `cppx.archive.system`, `cppx.checksum.system`, `cppx.async.system`, `cppx.http.system`, `cppx.http.async.system`, `cppx.http.transfer.system`) are the boundary where real OS/network effects occur.
 
 ## Tested behavior
@@ -379,6 +409,7 @@ Current tests cover:
 - pure env helpers and system-backed env lookup
 - filesystem writes, process execution, archive extraction, and checksum helpers
 - resource classification, unified resource reads, and Unicode boundary/UTF-16 conversion helpers
+- synchronization queues, duplicate suppression, background worker exception capture, and orderly queue/worker shutdown
 - shared sync/async network transport concepts and null helpers
 - coroutine tasks, generators, scopes, and deterministic virtual-time testing
 - HTTP URL parsing, headers, serialization, sync and async client behavior, server routing, transfer fallback policy, and sync/async system networking paths

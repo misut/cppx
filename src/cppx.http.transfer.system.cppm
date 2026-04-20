@@ -126,14 +126,18 @@ inline auto http_status_failure(std::uint16_t status_code) -> error_t {
     };
 }
 
-inline auto get_text(options_t const& options, std::string_view url)
+template <class HttpClient>
+inline auto get_text(HttpClient& http_client,
+                     options_t const& options,
+                     std::string_view url)
     -> std::expected<text_result_t, error_t> {
 #if defined(__wasi__)
+    (void)http_client;
     (void)options;
     (void)url;
     return std::unexpected(unsupported_http("request"));
 #else
-    auto response = cppx::http::system::client{}.get(url, options.headers);
+    auto response = http_client.get(url, options.headers);
     if (!response)
         return std::unexpected(http_failure("request", response.error()));
     if (!response->stat.ok())
@@ -145,11 +149,26 @@ inline auto get_text(options_t const& options, std::string_view url)
 #endif
 }
 
-inline auto download_file(options_t const& options,
+inline auto get_text(options_t const& options, std::string_view url)
+    -> std::expected<text_result_t, error_t> {
+#if defined(__wasi__)
+    (void)options;
+    (void)url;
+    return std::unexpected(unsupported_http("request"));
+#else
+    auto http_client = cppx::http::system::client{};
+    return get_text(http_client, options, url);
+#endif
+}
+
+template <class HttpClient>
+inline auto download_file(HttpClient& http_client,
+                          options_t const& options,
                           std::string_view url,
                           std::filesystem::path const& path)
     -> std::expected<transfer_result_t, error_t> {
 #if defined(__wasi__)
+    (void)http_client;
     (void)options;
     (void)url;
     (void)path;
@@ -162,7 +181,7 @@ inline auto download_file(options_t const& options,
     auto last_error = error_t{};
     for (int attempt = 1; attempt <= 3; ++attempt) {
         cleanup_download_target(path);
-        auto response = cppx::http::system::client{}.download_to(
+        auto response = http_client.download_to(
             url,
             path,
             options.headers);
@@ -184,6 +203,21 @@ inline auto download_file(options_t const& options,
 
     cleanup_download_target(path);
     return std::unexpected(last_error);
+#endif
+}
+
+inline auto download_file(options_t const& options,
+                          std::string_view url,
+                          std::filesystem::path const& path)
+    -> std::expected<transfer_result_t, error_t> {
+#if defined(__wasi__)
+    (void)options;
+    (void)url;
+    (void)path;
+    return std::unexpected(unsupported_http("download"));
+#else
+    auto http_client = cppx::http::system::client{};
+    return download_file(http_client, options, url, path);
 #endif
 }
 
@@ -519,6 +553,56 @@ inline auto dispatch_download_file(std::string_view url,
 
 export namespace cppx::http::transfer::system {
 
+template <class HttpClient>
+    requires requires(HttpClient& http_client,
+                      std::string_view url,
+                      std::filesystem::path const& path,
+                      cppx::http::headers headers) {
+        { http_client.get(url, headers) }
+            -> std::same_as<
+                std::expected<cppx::http::response, cppx::http::http_error>>;
+        { http_client.download_to(url, path, headers) }
+            -> std::same_as<
+                std::expected<cppx::http::response, cppx::http::http_error>>;
+    }
+inline auto get_text(
+    std::string_view url,
+    HttpClient& http_client,
+    cppx::http::transfer::TransferOptions options = {})
+    -> std::expected<
+        cppx::http::transfer::TextResult,
+        cppx::http::transfer::TransferError> {
+    using backend_t = cppx::http::transfer::TransferBackend;
+    using error_code_t = cppx::http::transfer::transfer_error_code;
+
+    switch (options.backend) {
+    case backend_t::CppxHttp:
+        return cppx::http::transfer::detail::cppx_backend::get_text(
+            http_client,
+            options,
+            url);
+    case backend_t::Shell:
+        return cppx::http::transfer::detail::shell_backend::get_text(options, url);
+    case backend_t::Auto:
+        return cppx::http::transfer::detail::with_shell_fallback(
+            "request",
+            cppx::http::transfer::detail::cppx_backend::get_text(
+                http_client,
+                options,
+                url),
+            [&] {
+                return cppx::http::transfer::detail::shell_backend::get_text(
+                    options,
+                    url);
+            });
+    }
+
+    return cppx::http::transfer::detail::make_error(
+        error_code_t::unsupported,
+        backend_t::Auto,
+        "unsupported transfer backend");
+}
+
 inline auto get_text(
     std::string_view url,
     cppx::http::transfer::TransferOptions options = {})
@@ -526,6 +610,62 @@ inline auto get_text(
         cppx::http::transfer::TextResult,
         cppx::http::transfer::TransferError> {
     return cppx::http::transfer::detail::dispatch_get_text(url, options);
+}
+
+template <class HttpClient>
+    requires requires(HttpClient& http_client,
+                      std::string_view url,
+                      std::filesystem::path const& path,
+                      cppx::http::headers headers) {
+        { http_client.get(url, headers) }
+            -> std::same_as<
+                std::expected<cppx::http::response, cppx::http::http_error>>;
+        { http_client.download_to(url, path, headers) }
+            -> std::same_as<
+                std::expected<cppx::http::response, cppx::http::http_error>>;
+    }
+inline auto download_file(std::string_view url,
+                          std::filesystem::path const& path,
+                          HttpClient& http_client,
+                          cppx::http::transfer::TransferOptions options = {})
+    -> std::expected<
+        cppx::http::transfer::TransferResult,
+        cppx::http::transfer::TransferError> {
+    using backend_t = cppx::http::transfer::TransferBackend;
+    using error_code_t = cppx::http::transfer::transfer_error_code;
+
+    switch (options.backend) {
+    case backend_t::CppxHttp:
+        return cppx::http::transfer::detail::cppx_backend::download_file(
+            http_client,
+            options,
+            url,
+            path);
+    case backend_t::Shell:
+        return cppx::http::transfer::detail::shell_backend::download_file(
+            options,
+            url,
+            path);
+    case backend_t::Auto:
+        return cppx::http::transfer::detail::with_shell_fallback(
+            "download",
+            cppx::http::transfer::detail::cppx_backend::download_file(
+                http_client,
+                options,
+                url,
+                path),
+            [&] {
+                return cppx::http::transfer::detail::shell_backend::download_file(
+                    options,
+                    url,
+                    path);
+            });
+    }
+
+    return cppx::http::transfer::detail::make_error(
+        error_code_t::unsupported,
+        backend_t::Auto,
+        "unsupported transfer backend");
 }
 
 inline auto download_file(std::string_view url,

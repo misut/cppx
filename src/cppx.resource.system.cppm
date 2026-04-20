@@ -127,12 +127,36 @@ inline auto map_http_error(std::string_view locator,
         error);
 }
 
+template <class HttpClient>
+inline auto read_remote_bytes(std::string_view locator,
+                              cppx::resource::resource_kind kind,
+                              cppx::http::headers headers,
+                              HttpClient& http_client)
+    -> std::expected<cppx::bytes::byte_buffer,
+                     cppx::resource::system::resource_read_error> {
+    auto response = http_client.get(locator, std::move(headers));
+    if (!response)
+        return map_http_error(locator, kind, response.error());
+    if (!response->stat.ok())
+        return map_http_status(locator, kind, response->stat.code);
+    return std::move(response->body);
+}
+
 } // namespace cppx::resource::system::detail
 
 export namespace cppx::resource::system {
 
+template <class HttpClient>
+    requires requires(HttpClient& http_client,
+                      std::string_view url,
+                      cppx::http::headers headers) {
+        { http_client.get(url, std::move(headers)) }
+            -> std::same_as<
+                std::expected<cppx::http::response, cppx::http::http_error>>;
+    }
 inline auto read_bytes(std::filesystem::path const& base,
                        std::string_view locator,
+                       HttpClient& http_client,
                        cppx::http::headers headers = {})
     -> std::expected<cppx::bytes::byte_buffer, resource_read_error> {
     auto const kind = cppx::resource::classify(locator);
@@ -167,20 +191,25 @@ inline auto read_bytes(std::filesystem::path const& base,
             kind,
             "remote resource reads are unavailable on wasm32-wasi");
 #else
-    {
-        auto response = cppx::http::system::client{}.get(locator, std::move(headers));
-        if (!response)
-            return detail::map_http_error(locator, kind, response.error());
-        if (!response->stat.ok())
-            return detail::map_http_status(locator, kind, response->stat.code);
-        return std::move(response->body);
-    }
+        return detail::read_remote_bytes(
+            locator,
+            kind,
+            std::move(headers),
+            http_client);
 #endif
     case cppx::resource::resource_kind::other_url:
         return detail::unsupported_locator(locator, kind, "unsupported locator scheme");
     }
 
     return detail::unsupported_locator(locator, kind, "unsupported locator scheme");
+}
+
+inline auto read_bytes(std::filesystem::path const& base,
+                       std::string_view locator,
+                       cppx::http::headers headers = {})
+    -> std::expected<cppx::bytes::byte_buffer, resource_read_error> {
+    auto http_client = cppx::http::system::client{};
+    return read_bytes(base, locator, http_client, std::move(headers));
 }
 
 } // namespace cppx::resource::system
