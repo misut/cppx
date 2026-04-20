@@ -49,6 +49,10 @@ function(exon_copy_windows_asan_runtime target)
             "$<TARGET_FILE_DIR:${target}>/clang_rt.asan_dynamic-x86_64.dll")
 endfunction()
 
+if(NOT DEFINED EXON_ENABLE_TEST_TARGETS)
+    set(EXON_ENABLE_TEST_TARGETS ON)
+endif()
+
 if(TARGET cppx)
     return()
 endif()
@@ -175,6 +179,8 @@ if(PROJECT_IS_TOP_LEVEL)
         )
     endif()
 endif()
+
+if(EXON_ENABLE_TEST_TARGETS)
 
 add_executable(test-archive)
 target_sources(test-archive PRIVATE
@@ -1759,3 +1765,4 @@ if(PROJECT_IS_TOP_LEVEL)
     endif()
 endif()
 exon_copy_windows_asan_runtime(test-unicode)
+endif()
