@@ -2,8 +2,6 @@ import cppx.bytes;
 import cppx.fs;
 import cppx.fs.system;
 import cppx.http;
-import cppx.http.server;
-import cppx.http.system;
 import cppx.resource;
 import cppx.resource.system;
 import cppx.test;
@@ -73,15 +71,19 @@ auto file_uri_from_path(std::filesystem::path const& path,
     return std::format("file://{}{}", authority, encoded);
 }
 
-void serve_once(cppx::http::system::listener& listener, std::string response) {
-    auto conn = listener.accept();
-    if (!conn)
-        return;
-    auto payload = text_bytes(response);
-    auto sent = cppx::http::system::send_all(*conn, payload.view());
-    (void)sent;
-    conn->close();
-}
+struct fake_http_client {
+    std::expected<cppx::http::response, cppx::http::http_error> next_response =
+        std::unexpected{cppx::http::http_error::connection_failed};
+    std::optional<std::string> last_url;
+    cppx::http::headers last_headers;
+
+    auto get(std::string_view url, cppx::http::headers extra = {})
+        -> std::expected<cppx::http::response, cppx::http::http_error> {
+        last_url = std::string{url};
+        last_headers = std::move(extra);
+        return next_response;
+    }
+};
 
 } // namespace
 
@@ -148,81 +150,46 @@ void test_file_url_reads() {
 
 #if !defined(__wasi__)
 void test_remote_url_and_headers() {
-    auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
-    tc.check(listener.has_value(), "remote resource listener bind");
-    if (!listener)
-        return;
-
-    auto const port = listener->local_port();
-    auto ready = std::promise<void>{};
-    auto ready_fut = ready.get_future();
-    auto observed_header = std::optional<std::string>{};
-    auto server_done = std::atomic<bool>{false};
-
-    auto server_thread = std::thread{[&,
-                                      l = std::move(*listener)]() mutable {
-        ready.set_value();
-        auto conn = l.accept();
-        if (!conn)
-            return;
-
-        cppx::http::detail::handle_connection(
-            std::move(*conn),
-            {{
-                cppx::http::method::GET,
-                "/asset",
-                [&](cppx::http::request const& req) -> cppx::http::response {
-                    if (auto value = req.hdrs.get("x-cppx-test"))
-                        observed_header = std::string{*value};
-                    return {
-                        .stat = {200},
-                        .hdrs = {},
-                        .body = cppx::http::as_bytes("remote bytes"),
-                    };
-                },
-            }},
-            [](cppx::http::request const&) -> cppx::http::response {
-                return {.stat = {404}, .hdrs = {}, .body = {}};
-            });
-        l.close();
-        server_done.store(true);
-    }};
-
-    ready_fut.wait();
+    auto http_client = fake_http_client{
+        .next_response = cppx::http::response{
+            .stat = {200},
+            .hdrs = {},
+            .body = cppx::http::as_bytes("remote bytes"),
+        },
+    };
 
     auto headers = cppx::http::headers{};
     headers.set("x-cppx-test", "resource-system");
     auto read = cppx::resource::system::read_bytes(
         std::filesystem::temp_directory_path(),
-        std::format("http://127.0.0.1:{}/asset", port),
+        "http://example.test/asset",
+        http_client,
         std::move(headers));
 
     tc.check(read.has_value(), "read remote URL");
     if (read)
         tc.check(bytes_to_string(read->view()) == "remote bytes",
                  "remote URL preserves response body");
-
-    server_thread.join();
-    tc.check(server_done.load(), "remote resource server completed");
-    tc.check(observed_header == std::optional<std::string>{"resource-system"},
+    tc.check(http_client.last_url == std::optional<std::string>{"http://example.test/asset"},
+             "remote resource forwards request URL");
+    tc.check(http_client.last_headers.get("x-cppx-test")
+                 == std::optional<std::string_view>{"resource-system"},
              "remote resource forwards request headers");
 }
 
 void test_remote_http_404_mapping() {
-    auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
-    tc.check(listener.has_value(), "404 listener bind");
-    if (!listener)
-        return;
-
-    auto server_thread = std::thread{[&] {
-        serve_once(
-            *listener,
-            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-    }};
+    auto http_client = fake_http_client{
+        .next_response = cppx::http::response{
+            .stat = {404},
+            .hdrs = {},
+            .body = {},
+        },
+    };
 
     auto read = cppx::resource::system::read_bytes(
         std::filesystem::temp_directory_path(),
-        std::format("http://127.0.0.1:{}/missing", listener->local_port()));
+        "http://example.test/missing",
+        http_client);
 
     tc.check(!read.has_value(), "404 result surfaces as error");
     if (!read) {
@@ -232,26 +199,21 @@ void test_remote_http_404_mapping() {
         tc.check(read.error().http_status_code == 404,
                  "404 status code preserved");
     }
-
-    listener->close();
-    server_thread.join();
 }
 
 void test_remote_http_500_mapping() {
-    auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
-    tc.check(listener.has_value(), "500 listener bind");
-    if (!listener)
-        return;
-
-    auto server_thread = std::thread{[&] {
-        serve_once(
-            *listener,
-            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-    }};
+    auto http_client = fake_http_client{
+        .next_response = cppx::http::response{
+            .stat = {500},
+            .hdrs = {},
+            .body = {},
+        },
+    };
 
     auto read = cppx::resource::system::read_bytes(
         std::filesystem::temp_directory_path(),
-        std::format("http://127.0.0.1:{}/error", listener->local_port()));
+        "http://example.test/error",
+        http_client);
 
     tc.check(!read.has_value(), "500 result surfaces as error");
     if (!read) {
@@ -261,15 +223,14 @@ void test_remote_http_500_mapping() {
         tc.check(read.error().http_status_code == 500,
                  "500 status code preserved");
     }
-
-    listener->close();
-    server_thread.join();
 }
 
 void test_remote_transport_failure_mapping() {
+    auto http_client = fake_http_client{};
     auto read = cppx::resource::system::read_bytes(
         std::filesystem::temp_directory_path(),
-        "http://127.0.0.1:1/unreachable");
+        "http://example.test/unreachable",
+        http_client);
 
     tc.check(!read.has_value(), "connection failure surfaces as error");
     if (!read)
