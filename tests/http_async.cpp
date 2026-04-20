@@ -110,8 +110,11 @@ struct redirect_async_stream {
 
 struct redirect_async_tls {
     using stream = redirect_async_stream;
+    inline static std::size_t wrap_calls = 0;
+
     auto wrap(redirect_async_stream raw, std::string_view) const
         -> cppx::async::task<std::expected<redirect_async_stream, cppx::http::net_error>> {
+        ++wrap_calls;
         co_return std::move(raw);
     }
 };
@@ -233,6 +236,7 @@ void test_connection_refused() {
 
 void test_redirect_followed() {
     redirect_async_stream::conn_index = 0;
+    redirect_async_tls::wrap_calls = 0;
     redirect_async_stream::responses = {
         make_response_bytes(
             "HTTP/1.1 302 Found\r\n"
@@ -253,6 +257,36 @@ void test_redirect_followed() {
     tc.check(resp.has_value(), "async redirect followed");
     tc.check(resp->stat.code == 200, "async redirect final status");
     tc.check(resp->body_string() == "done", "async redirect final body");
+    tc.check(redirect_async_tls::wrap_calls == 0,
+             "async redirect without TLS keeps raw transport");
+}
+
+void test_redirect_to_https() {
+    redirect_async_stream::conn_index = 0;
+    redirect_async_tls::wrap_calls = 0;
+    redirect_async_stream::responses = {
+        make_response_bytes(
+            "HTTP/1.1 302 Found\r\n"
+            "Location: https://example.com/final\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n"),
+        make_response_bytes(
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Length: 6\r\n"
+            "\r\n"
+            "secure"),
+    };
+
+    auto c = cppx::http::async::client<redirect_async_stream, redirect_async_tls>{};
+    auto resp = run_task<std::expected<cppx::http::response, cppx::http::http_error>>(
+        [&] { return c.get("http://example.com/start"); });
+
+    tc.check(resp.has_value(), "async redirect to https followed");
+    tc.check(resp->stat.code == 200, "async redirect to https final status");
+    tc.check(resp->body_string() == "secure",
+             "async redirect to https final body");
+    tc.check(redirect_async_tls::wrap_calls == 1,
+             "async redirect to https upgrades through TLS provider");
 }
 
 void test_chunked_response() {
@@ -341,6 +375,7 @@ int main() {
     test_head_no_body();
     test_connection_refused();
     test_redirect_followed();
+    test_redirect_to_https();
     test_chunked_response();
     test_download_to();
     test_get_tail_limited_stream();
