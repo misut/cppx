@@ -81,6 +81,7 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.server.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.system.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.transfer.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.transfer.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.net.async.cppm
@@ -122,6 +123,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.server.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.system.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.transfer.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.http.transfer.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.net.async.cppm
@@ -1141,6 +1143,54 @@ if(PROJECT_IS_TOP_LEVEL)
     endif()
 endif()
 exon_copy_windows_asan_runtime(test-http_system)
+
+add_executable(test-http_system_smoke)
+target_sources(test-http_system_smoke PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_system_smoke.cpp
+)
+target_link_libraries(test-http_system_smoke PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-http_system_smoke PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_system_smoke PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-http_system_smoke PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-http_system_smoke PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-http_system_smoke PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-http_system_smoke)
 
 add_executable(test-http_transfer)
 target_sources(test-http_transfer PRIVATE

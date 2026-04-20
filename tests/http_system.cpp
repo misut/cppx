@@ -1,9 +1,8 @@
-// Smoke test for cppx.http.system socket engines. Starts a listener
-// on an ephemeral port, connects with a stream, sends/receives data,
-// and verifies the round-trip. This is the only HTTP test that touches
-// real sockets — the pure parser/types tests are in tests/http.cpp.
+// Deterministic machine-local tests for cppx.http.system. Public
+// internet coverage lives in tests/http_system_smoke.cpp.
 
 import cppx.http;
+import cppx.http.server;
 import cppx.http.system;
 import cppx.bytes;
 import cppx.test;
@@ -17,16 +16,10 @@ auto http_test_user_agent() -> cppx::http::headers {
     return hdrs;
 }
 
-auto parse_content_length(std::string_view value) -> std::optional<std::size_t> {
-    if (value.empty())
-        return std::nullopt;
-    std::size_t length = 0;
-    for (auto ch : value) {
-        if (ch < '0' || ch > '9')
-            return std::nullopt;
-        length = length * 10 + static_cast<std::size_t>(ch - '0');
-    }
-    return length;
+auto read_text_file(std::filesystem::path const& path) -> std::string {
+    auto in = std::ifstream{path, std::ios::binary};
+    return std::string{std::istreambuf_iterator<char>(in),
+                       std::istreambuf_iterator<char>()};
 }
 
 void test_tcp_roundtrip() {
@@ -96,67 +89,113 @@ void test_dns_resolution() {
     }
 }
 
-void test_https_get() {
-#if defined(__APPLE__)
+void test_local_get() {
+    auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
+    tc.check(listener.has_value(), "local GET listener bind succeeds");
+    if (!listener)
+        return;
+
+    auto port = listener->local_port();
+    auto ready = std::promise<void>{};
+    auto ready_fut = ready.get_future();
+    auto server_thread = std::thread{[&, l = std::move(*listener)]() mutable {
+        ready.set_value();
+        auto conn = l.accept();
+        if (!conn)
+            return;
+        cppx::http::detail::handle_connection(
+            std::move(*conn),
+            {{cppx::http::method::GET, "/health",
+              [](cppx::http::request const& req) -> cppx::http::response {
+                  auto resp = cppx::http::response{
+                      .stat = {200},
+                      .hdrs = {},
+                      .body = cppx::http::as_bytes("local ok"),
+                  };
+                  if (auto user_agent = req.hdrs.get("user-agent"))
+                      resp.hdrs.set("x-seen-user-agent", *user_agent);
+                  return resp;
+              }}},
+            [](cppx::http::request const&) -> cppx::http::response {
+                return {.stat = {404}, .hdrs = {}, .body = {}};
+            });
+        l.close();
+    }};
+
+    ready_fut.wait();
+
     auto resp = cppx::http::system::get(
-        "https://raw.githubusercontent.com/misut/phenotype/main/examples/native/assets/showcase.bmp",
+        std::format("http://127.0.0.1:{}/health", port),
         http_test_user_agent());
-    tc.check(resp.has_value(), "HTTPS GET succeeds");
+
+    tc.check(resp.has_value(), "local GET succeeds");
     if (resp) {
-        tc.check(resp->stat.code == 200, "HTTPS status 200");
-        tc.check(!resp->body.empty(), "HTTPS body non-empty");
-        auto content_length = resp->hdrs.get("content-length");
-        tc.check(content_length.has_value(), "macOS HTTPS GET has content-length");
-        if (content_length) {
-            auto parsed = parse_content_length(*content_length);
-            tc.check(parsed.has_value(), "content-length parses as a number");
-            if (parsed)
-                tc.check(resp->body.size() == *parsed,
-                      "GitHub asset body size matches content-length");
-        }
+        tc.check(resp->stat.code == 200, "local GET status 200");
+        tc.check(resp->body_string() == "local ok", "local GET body matches");
+        tc.check(resp->hdrs.get("x-seen-user-agent")
+                     == std::optional<std::string_view>{"cppx/test-http_system"},
+                 "local GET forwards request headers");
     }
-#else
-    auto resp = cppx::http::system::get(
-        "https://www.google.com/robots.txt", http_test_user_agent());
-    tc.check(resp.has_value(), "HTTPS GET succeeds");
-    if (resp) {
-        tc.check(resp->stat.code == 200, "HTTPS status 200");
-        tc.check(!resp->body.empty(), "HTTPS body non-empty");
-        tc.check(resp->body_string().contains("User-agent"),
-              "robots.txt contains User-agent");
-    }
-#endif
+
+    server_thread.join();
 }
 
-void test_https_download() {
-    auto tmp = std::filesystem::temp_directory_path();
-#if defined(__APPLE__)
-    // GitHub release assets redirect to a keep-alive blob response with an
-    // explicit Content-Length. This path exercises the macOS download stall
-    // regression that simple close-delimited responses miss.
-    auto path = tmp / "cppx_test_https_dl.zip";
-    auto r = cppx::http::system::download(
-        "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-mac.zip",
-        path, http_test_user_agent());
-#else
-    auto path = tmp / "cppx_test_https_dl.txt";
-    auto r = cppx::http::system::download(
-        "https://www.google.com/robots.txt", path, http_test_user_agent());
-#endif
-    tc.check(r.has_value(), "HTTPS download succeeds");
-    if (r) {
-        tc.check(std::filesystem::exists(path), "downloaded file exists");
-        tc.check(std::filesystem::file_size(path) > 0,
-              "downloaded file non-empty");
-        std::filesystem::remove(path);
+void test_local_download() {
+    auto listener = cppx::http::system::listener::bind("127.0.0.1", 0);
+    tc.check(listener.has_value(), "local download listener bind succeeds");
+    if (!listener)
+        return;
+
+    auto port = listener->local_port();
+    auto ready = std::promise<void>{};
+    auto ready_fut = ready.get_future();
+    auto server_thread = std::thread{[&, l = std::move(*listener)]() mutable {
+        ready.set_value();
+        auto conn = l.accept();
+        if (!conn)
+            return;
+        cppx::http::detail::handle_connection(
+            std::move(*conn),
+            {{cppx::http::method::GET, "/file",
+              [](cppx::http::request const&) -> cppx::http::response {
+                  return {
+                      .stat = {200},
+                      .hdrs = {},
+                      .body = cppx::http::as_bytes("downloaded locally"),
+                  };
+              }}},
+            [](cppx::http::request const&) -> cppx::http::response {
+                return {.stat = {404}, .hdrs = {}, .body = {}};
+            });
+        l.close();
+    }};
+
+    ready_fut.wait();
+
+    auto path = std::filesystem::temp_directory_path() / std::format(
+        "cppx-http-system-local-{}",
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    auto result = cppx::http::system::download(
+        std::format("http://127.0.0.1:{}/file", port),
+        path,
+        http_test_user_agent());
+
+    tc.check(result.has_value(), "local download succeeds");
+    if (result) {
+        tc.check(std::filesystem::exists(path), "local download file exists");
+        tc.check(read_text_file(path) == "downloaded locally",
+                 "local download contents match");
     }
+
+    std::filesystem::remove(path);
+    server_thread.join();
 }
 
 int main() {
     test_tcp_roundtrip();
     test_connect_refused();
     test_dns_resolution();
-    test_https_get();
-    test_https_download();
+    test_local_get();
+    test_local_download();
     return tc.summary("cppx.http.system");
 }
