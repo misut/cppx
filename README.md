@@ -59,6 +59,7 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.http.server` | Generic HTTP server, routing, static file serving, MIME helpers. |
 | `cppx.http.transfer` | Transfer backend policy, result types, and fallback rules. |
 | `cppx.http.system` | Platform-backed sockets/TLS plus convenience helpers like `get` and `download`. |
+| `cppx.http.system.test` | Deterministic test double for the first-party sync HTTP facade. |
 | `cppx.http.async.system` | First-party async HTTP facade over `cppx.async.system` for plain `http://` requests. |
 | `cppx.http.transfer.system` | First-party text/file transfer facade with bounded shell fallback. |
 
@@ -241,6 +242,29 @@ int main() {
 preferred first-party HTTP entrypoints. Platform transport details stay
 behind that facade, including WinHTTP-backed requests on Windows.
 
+### Deterministic HTTP system tests
+
+```cpp
+import cppx.http;
+import cppx.http.system.test;
+import std;
+
+int main() {
+    auto http = cppx::http::system::test::test_client{};
+    http.next_get = cppx::http::response{
+        .stat = {200},
+        .hdrs = {},
+        .body = cppx::http::as_bytes("ok"),
+    };
+}
+```
+
+Use `import cppx.http.system.test;` when you want deterministic test
+doubles for code that depends on the first-party sync HTTP facade.
+Always-on `test-http_system` coverage stays machine-local, while public
+internet checks live in the opt-in smoke run gated by
+`CPPX_RUN_HTTP_SYSTEM_SMOKE=1`.
+
 ### Async HTTP client
 
 ```cpp
@@ -395,6 +419,7 @@ target_link_libraries(your_target PRIVATE cppx)
 - Field-name extraction currently targets Clang and MSVC.
 - Nested aggregates may need an explicit descriptor in higher-level libraries that build on reflection.
 - `import cppx;` is intentionally small. Filesystem, process, archive, checksum, HTTP, async, and sync modules remain opt-in imports.
+- `cppx.http.system.test` and `cppx.async.system.test` are opt-in test seams. They are not re-exported from `import cppx;`.
 - `cppx.sync::work_queue<T>` and `cppx.sync::coalescing_queue<Key, T>` drain already-queued work after `close()` and only return `std::nullopt` once the queue is both closed and empty.
 - `cppx.sync::coalescing_queue<Key, T>` suppresses duplicate keys only while an item is still queued. The key is released as soon as the item is popped, not when downstream processing finishes.
 - `cppx.sync::background_worker` is intentionally a thin single-thread lifecycle wrapper. It is not a scheduler, coroutine bridge, thread pool, or generic task-executor layer.
@@ -412,7 +437,7 @@ Current tests cover:
 - synchronization queues, duplicate suppression, background worker exception capture, and orderly queue/worker shutdown
 - shared sync/async network transport concepts and null helpers
 - coroutine tasks, generators, scopes, and deterministic virtual-time testing
-- HTTP URL parsing, headers, serialization, sync and async client behavior, server routing, transfer fallback policy, and sync/async system networking paths
+- HTTP URL parsing, headers, serialization, sync and async client behavior, server routing, transfer fallback policy, deterministic sync/async system networking paths, and opt-in external-network smoke coverage
 - OS URL-opening error paths
 
 ## Repository

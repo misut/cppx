@@ -2,6 +2,7 @@ import cppx.bytes;
 import cppx.fs;
 import cppx.fs.system;
 import cppx.http;
+import cppx.http.system.test;
 import cppx.resource;
 import cppx.resource.system;
 import cppx.test;
@@ -10,6 +11,8 @@ import std;
 cppx::test::context tc;
 
 namespace {
+
+namespace system_test = cppx::http::system::test;
 
 auto same_bytes(cppx::bytes::bytes_view lhs, cppx::bytes::bytes_view rhs) -> bool {
     if (lhs.size() != rhs.size())
@@ -70,20 +73,6 @@ auto file_uri_from_path(std::filesystem::path const& path,
         return std::format("file://{}", encoded);
     return std::format("file://{}{}", authority, encoded);
 }
-
-struct fake_http_client {
-    std::expected<cppx::http::response, cppx::http::http_error> next_response =
-        std::unexpected{cppx::http::http_error::connection_failed};
-    std::optional<std::string> last_url;
-    cppx::http::headers last_headers;
-
-    auto get(std::string_view url, cppx::http::headers extra = {})
-        -> std::expected<cppx::http::response, cppx::http::http_error> {
-        last_url = std::string{url};
-        last_headers = std::move(extra);
-        return next_response;
-    }
-};
 
 } // namespace
 
@@ -150,8 +139,8 @@ void test_file_url_reads() {
 
 #if !defined(__wasi__)
 void test_remote_url_and_headers() {
-    auto http_client = fake_http_client{
-        .next_response = cppx::http::response{
+    auto http_client = system_test::test_client{
+        .next_get = cppx::http::response{
             .stat = {200},
             .hdrs = {},
             .body = cppx::http::as_bytes("remote bytes"),
@@ -178,8 +167,8 @@ void test_remote_url_and_headers() {
 }
 
 void test_remote_http_404_mapping() {
-    auto http_client = fake_http_client{
-        .next_response = cppx::http::response{
+    auto http_client = system_test::test_client{
+        .next_get = cppx::http::response{
             .stat = {404},
             .hdrs = {},
             .body = {},
@@ -202,8 +191,8 @@ void test_remote_http_404_mapping() {
 }
 
 void test_remote_http_500_mapping() {
-    auto http_client = fake_http_client{
-        .next_response = cppx::http::response{
+    auto http_client = system_test::test_client{
+        .next_get = cppx::http::response{
             .stat = {500},
             .hdrs = {},
             .body = {},
@@ -226,7 +215,7 @@ void test_remote_http_500_mapping() {
 }
 
 void test_remote_transport_failure_mapping() {
-    auto http_client = fake_http_client{};
+    auto http_client = system_test::test_client{};
     auto read = cppx::resource::system::read_bytes(
         std::filesystem::temp_directory_path(),
         "http://example.test/unreachable",

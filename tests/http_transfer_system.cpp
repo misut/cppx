@@ -1,5 +1,6 @@
 import cppx.http;
 import cppx.http.system;
+import cppx.http.system.test;
 import cppx.http.transfer;
 import cppx.http.transfer.system;
 import cppx.bytes;
@@ -10,42 +11,16 @@ cppx::test::context tc;
 
 namespace {
 
+namespace system_test = cppx::http::system::test;
+
 auto bytes_from(std::string_view text) -> cppx::bytes::byte_buffer {
     return cppx::http::as_bytes(text);
 }
 
-struct fake_http_client {
-    std::expected<cppx::http::response, cppx::http::http_error> next_get =
-        std::unexpected{cppx::http::http_error::connection_failed};
-    std::expected<cppx::http::response, cppx::http::http_error> next_download =
-        std::unexpected{cppx::http::http_error::connection_failed};
-    std::optional<std::string> last_url;
-    std::optional<std::filesystem::path> last_download_path;
-    cppx::http::headers last_headers;
-
-    auto get(std::string_view url, cppx::http::headers extra = {})
-        -> std::expected<cppx::http::response, cppx::http::http_error> {
-        last_url = std::string{url};
-        last_headers = std::move(extra);
-        return next_get;
-    }
-
-    auto download_to(std::string_view url,
-                     std::filesystem::path const& path,
-                     cppx::http::headers extra = {},
-                     std::size_t = cppx::http::default_download_body_limit)
-        -> std::expected<cppx::http::response, cppx::http::http_error> {
-        last_url = std::string{url};
-        last_download_path = path;
-        last_headers = std::move(extra);
-        return next_download;
-    }
-};
-
 } // namespace
 
 void test_get_text_does_not_fallback_on_http_404() {
-    auto http_client = fake_http_client{
+    auto http_client = system_test::test_client{
         .next_get = cppx::http::response{
             .stat = {404},
             .hdrs = {},
@@ -132,7 +107,7 @@ void test_shell_backend_timeout_surfaces_as_shell_error() {
 }
 
 void test_download_file_uses_cppx_http_without_fallback_on_http_404() {
-    auto http_client = fake_http_client{
+    auto http_client = system_test::test_client{
         .next_download = cppx::http::response{
             .stat = {404},
             .hdrs = {},
@@ -163,10 +138,13 @@ void test_download_file_uses_cppx_http_without_fallback_on_http_404() {
     tc.check(!std::filesystem::exists(output), "download 404 leaves no output file");
     tc.check(http_client.last_download_path == std::optional<std::filesystem::path>{output},
              "download 404 keeps requested output path");
+    tc.check(http_client.last_max_body
+                 == std::optional<std::size_t>{cppx::http::default_download_body_limit},
+             "download 404 uses default max_body");
 }
 
 void test_download_file_connection_failure_leaves_no_partial_file() {
-    auto http_client = fake_http_client{};
+    auto http_client = system_test::test_client{};
     auto output = std::filesystem::temp_directory_path() / std::format(
         "cppx-transfer-failure-{}",
         std::chrono::steady_clock::now().time_since_epoch().count());
