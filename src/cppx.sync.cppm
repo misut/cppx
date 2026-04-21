@@ -4,6 +4,12 @@
 export module cppx.sync;
 import std;
 
+// wasm32-wasi disables exceptions (-fno-exceptions) and does not ship a
+// threading runtime yet, so the whole module compiles as an empty stub.
+// Callers that need sync primitives should avoid importing cppx.sync on
+// that target.
+#if !defined(__wasi__)
+
 export namespace cppx::sync {
 
 template <class T>
@@ -355,3 +361,5 @@ private:
 };
 
 } // namespace cppx::sync
+
+#endif // !defined(__wasi__)
