@@ -34,6 +34,19 @@ inline constexpr auto sample_tar_xz_base64 = std::string_view{
     "2FEd6R+AwMY32CpaYcXR+VsrjBJE1eNbAnBkhqsP4D/QNZ7HUPll+P4sbjLg0ODuTQPNSDA9dYAAAAAALnS5"
     "t3GmbO1AAHuBICIAQCtxf8BscRn+wIAAAAABFla"};
 
+inline constexpr auto sample_symlink_tar_gz_base64 = std::string_view{
+    "H4sIACbq52kAA+2bQW/TMBiGs0kIUU4c4EoOnNPPdmw3hwmVadKKVgHbhOBUhS7bqnbJaAP0zp/gzpn/iN2tCu3alUSxJ9Xf"
+    "I0Vp0qRxEr32009J0JuM+55ZAEBy7s/mQszmivkcgIbMJ5xIIgWHUPhAKOXg+WC4XTO+TfJ4rJoyjIdxds92Py6TZHTP94sn"
+    "5dfcSnM8evHY2/W8btz33534n/xb9DrviZqomr6qSS///r+fbJ+eHt9+1Hv8UtPTpU12ivXP+9lVEF9fj5Lgepx9T9I47Sfe"
+    "zq7X6P559vrlq581nCSyjvfx9DCJz5Jx01w/sDH/BJbyz6QUnj811J4FHM8/A/8qH1wle0Rd8haIkLUCIDJijJGowaV/1HnT"
+    "Pt4/7Hw8CKZxno+DVXHda3/otPeHND84bZ2/7XQbYeSfqJ2OPt+30z8Zbzz0dXAVlfqm6WNsyr9eWBr/Caj8c9MN0zief33/"
+    "g95ZnF6MBumFmWOU978QGEP/swL6n9Po/BcOaKYfKO9/nAuC/meDdf5HQvQ/F9D5Nzv6V/E/KUB6Pg2CZpqlyXQwyZM0b6qg"
+    "XiR5zY1zPP83/vdlkBo8Rnn/Y0Cx/mcH9D+nWfQ/M/1Aef8LeYj1Pyus9D+IoigEydD/th6df5V6ozXACvU/wbH+Z4Ub/5tc"
+    "xuPE2DEq+B/jFP3PCuh/TrPof2b6gQr1PwKA/meD1f5HSYuHnKD/bT06/7PUGzTA8v7HVJeA/meD4v4HvUF6ngX5tO4Kq74k"
+    "IgzL+B8nWP+zBPqf0xT5Lyyw7n5gY/7v+J8QWP+zwxr/o5wxytH/tp4i/6ZG/835B+DL9X8hJY7/NtB3HcPnLvP6f9DLs2z0"
+    "MPlf8fynIOj/dkD/d5p5/gv7r78fqOD/jKH/W2GN/0PEQUr0/61nnn9zo38l/2cC/d8K+r5j+Nyl8P/RIB0a8/+y739xie9/"
+    "2QH932nu+n/9/cDG/IO84/9Uov/bgEarn/+VEQ1R/7efef7Njf5Vnv8QINT4T03+KZnjeP4RBHGXvz8+xAwATgAA"};
+
 inline constexpr auto sample_zip_base64 = std::string_view{
     "UEsDBAoAAAAAAJGukVwAAAAAAAAAAAAAAAAFABwAcm9vdC9VVAkAAxIt4mkSLeJpdXgLAAEE9gEAAAQUAAAAUEsDBAoAAAAAAJGu"
     "kVwAAAAAAAAAAAAAAAALABwAcm9vdC9pbm5lci9VVAkAAxIt4mkSLeJpdXgLAAEE9gEAAAQUAAAAUEsDBAoAAAAAAJGukVwAAAAA"
@@ -191,6 +204,37 @@ void test_extract_zip_with_strip_components() {
     std::filesystem::remove_all(root);
 }
 
+void test_extract_tar_gz_preserves_symlinks() {
+    auto root = unique_temp_dir("cppx-archive-symlink");
+    auto archive_path = root / "sample.tar.gz";
+    auto destination = root / "out";
+    write_fixture(archive_path, sample_symlink_tar_gz_base64);
+
+    auto result = cppx::archive::system::extract({
+        .archive_path = archive_path,
+        .destination_dir = destination,
+        .format = cppx::archive::ArchiveFormat::TarGz,
+        .strip_components = 1,
+    });
+
+    tc.check(result.has_value(), "tar.gz with symlinks extracts");
+    if (result) {
+        auto link_path = destination / "bin" / "link.txt";
+        auto dangling_path = destination / "dangling";
+        std::error_code ec;
+        tc.check(std::filesystem::is_symlink(link_path, ec),
+                 "resolvable symlink preserved as symlink");
+        tc.check(std::filesystem::read_symlink(link_path, ec) == "tool.txt",
+                 "resolvable symlink target preserved");
+        tc.check(std::filesystem::is_symlink(dangling_path, ec),
+                 "dangling symlink still created");
+        tc.check(std::filesystem::read_symlink(dangling_path, ec) ==
+                     std::filesystem::path("../nonexistent/target"),
+                 "dangling symlink target preserved");
+    }
+    std::filesystem::remove_all(root);
+}
+
 void test_extract_rejects_negative_strip_components() {
     auto root = unique_temp_dir("cppx-archive-invalid");
     auto result = cppx::archive::system::extract({
@@ -213,6 +257,7 @@ int main() {
     test_extract_tar_gz_with_strip_components();
     test_extract_tar_xz_with_strip_components();
     test_extract_zip_with_strip_components();
+    test_extract_tar_gz_preserves_symlinks();
     test_extract_rejects_negative_strip_components();
     return tc.summary("cppx.archive.system");
 }
