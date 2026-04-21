@@ -12,7 +12,7 @@
 
 module;
 
-#if defined(__APPLE__) || defined(__linux__)
+#if (defined(__APPLE__) || defined(__linux__)) && !defined(__ANDROID__)
 #include <cerrno>
 #include <sys/socket.h>
 #endif
@@ -23,7 +23,7 @@ module;
 #include <Security/Security.h>
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #endif
@@ -42,7 +42,7 @@ module;
 
 export module cppx.http.async.system;
 
-#if !defined(__wasi__)
+#if !defined(__wasi__) && !defined(__ANDROID__)
 import cppx.async;
 import cppx.async.system;
 import cppx.bytes;

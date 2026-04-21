@@ -11,7 +11,10 @@
 module;
 
 // Global module fragment: platform headers that C++23 modules can't import.
-#if defined(__APPLE__) || defined(__linux__)
+// Android is POSIX-like but the NDK sysroot does not bundle OpenSSL, so we
+// treat it as a stub target (like wasi). Callers that need HTTPS on Android
+// should wire in their own TLS provider via cppx.http's engine concepts.
+#if (defined(__APPLE__) || defined(__linux__)) && !defined(__ANDROID__)
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -27,7 +30,7 @@ module;
 #include <Security/Security.h>
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #endif
@@ -52,8 +55,11 @@ export module cppx.http.system;
 
 // The HTTP system module is platform-specific (POSIX sockets / WinSock /
 // TLS). On wasm32-wasi there is no socket API, so the module compiles as
-// an empty stub — callers should not import it on that target.
-#if !defined(__wasi__)
+// an empty stub — callers should not import it on that target. Android is
+// treated the same way: its NDK sysroot has POSIX sockets but no OpenSSL,
+// and the GameActivity-centric apps we target rarely need the host-level
+// TLS plumbing here.
+#if !defined(__wasi__) && !defined(__ANDROID__)
 import cppx.bytes;
 import std;
 import cppx.http;
