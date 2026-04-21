@@ -32,6 +32,7 @@ enum class OS {
     MacOS,
     Windows,
     WASI,
+    Android,
 };
 
 enum class Arch {
@@ -47,6 +48,7 @@ constexpr std::string_view os_name(OS os) noexcept {
         case OS::MacOS:   return "macos";
         case OS::Windows: return "windows";
         case OS::WASI:    return "wasi";
+        case OS::Android: return "android";
         case OS::Unknown: return "unknown";
     }
     return "unknown";
@@ -96,6 +98,8 @@ consteval Platform host() noexcept {
 
 #if defined(__APPLE__)
     p.os = OS::MacOS;
+#elif defined(__ANDROID__)
+    p.os = OS::Android;
 #elif defined(__linux__)
     p.os = OS::Linux;
 #elif defined(_WIN32)
@@ -125,6 +129,8 @@ inline auto parse_os(std::string_view value) -> OS {
         return OS::Windows;
     if (token == "wasi")
         return OS::WASI;
+    if (token == "android")
+        return OS::Android;
     return OS::Unknown;
 }
 
@@ -166,6 +172,15 @@ inline auto parse_platform(std::string_view value) -> Platform {
     auto const os_right = parse_os(right);
     if (os_right != OS::Unknown && arch_left != Arch::Unknown) {
         return Platform{os_right, arch_left};
+    }
+
+    // 3-part Android triples: "<arch>-linux-android" and "<arch>-linux-android<N>"
+    // (e.g. aarch64-linux-android, aarch64-linux-android33).
+    if (auto pos = token.find("-linux-android"); pos != std::string_view::npos) {
+        auto const arch_part = std::string_view{token}.substr(0, pos);
+        if (auto arch = parse_arch(arch_part); arch != Arch::Unknown) {
+            return Platform{OS::Android, arch};
+        }
     }
 
     return Platform{OS::Unknown, Arch::Unknown};

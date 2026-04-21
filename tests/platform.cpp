@@ -21,6 +21,7 @@ void test_os_name() {
     static_assert(cppx::platform::os_name(OS::MacOS) == "macos");
     static_assert(cppx::platform::os_name(OS::Windows) == "windows");
     static_assert(cppx::platform::os_name(OS::WASI) == "wasi");
+    static_assert(cppx::platform::os_name(OS::Android) == "android");
     static_assert(cppx::platform::os_name(OS::Unknown) == "unknown");
     tc.check(true, "os_name table");
 }
@@ -74,6 +75,8 @@ void test_matches() {
 void test_parse_os_and_arch() {
     tc.check(cppx::platform::parse_os("linux") == OS::Linux, "parse_os linux");
     tc.check(cppx::platform::parse_os("MACOS") == OS::MacOS, "parse_os macos");
+    tc.check(cppx::platform::parse_os("android") == OS::Android, "parse_os android");
+    tc.check(cppx::platform::parse_os("Android") == OS::Android, "parse_os Android case-insensitive");
     tc.check(cppx::platform::parse_os("unknown-os") == OS::Unknown, "parse_os unknown");
 
     tc.check(cppx::platform::parse_arch("x86_64") == Arch::X86_64, "parse_arch x86_64");
@@ -112,6 +115,18 @@ void test_target_triple_helper() {
                  && linux_target->os == OS::Linux
                  && linux_target->arch == Arch::X86_64,
              "platform_from_target_triple supports short form");
+
+    auto android = cppx::platform::platform_from_target_triple("aarch64-linux-android");
+    tc.check(android.has_value()
+                 && android->os == OS::Android
+                 && android->arch == Arch::AArch64,
+             "platform_from_target_triple supports aarch64-linux-android");
+
+    auto android_api = cppx::platform::platform_from_target_triple("aarch64-linux-android33");
+    tc.check(android_api.has_value()
+                 && android_api->os == OS::Android
+                 && android_api->arch == Arch::AArch64,
+             "platform_from_target_triple supports Android triple with API level");
 
     auto invalid = cppx::platform::platform_from_target_triple("linux");
     tc.check(!invalid.has_value(),
