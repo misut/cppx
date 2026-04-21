@@ -141,13 +141,14 @@ inline auto move_stripped_tree(std::filesystem::path const& root,
                         entry.path().string(),
                         ec.message()));
             }
-            std::filesystem::copy_symlink(link_target, target, ec);
+            std::filesystem::create_symlink(link_target, target, ec);
             if (ec) {
                 return make_error(
                     cppx::archive::archive_error_code::move_failed,
                     std::format(
-                        "could not copy symlink to '{}': {}",
+                        "could not create symlink '{}' -> '{}': {}",
                         target.string(),
+                        link_target.string(),
                         ec.message()));
             }
             continue;
