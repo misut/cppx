@@ -185,11 +185,12 @@ inline auto read_bytes(std::filesystem::path const& base,
     }
     case cppx::resource::resource_kind::http_url:
     case cppx::resource::resource_kind::https_url:
-#if defined(__wasi__)
+#if defined(__wasi__) || defined(__ANDROID__)
         return detail::unsupported_locator(
             locator,
             kind,
-            "remote resource reads are unavailable on wasm32-wasi");
+            "remote resource reads are unavailable on this platform "
+            "(wasi / android have no built-in HTTPS backend)");
 #else
         return detail::read_remote_bytes(
             locator,
@@ -204,6 +205,11 @@ inline auto read_bytes(std::filesystem::path const& base,
     return detail::unsupported_locator(locator, kind, "unsupported locator scheme");
 }
 
+#if !defined(__wasi__) && !defined(__ANDROID__)
+// Convenience overload that constructs a default `cppx::http::system::client`.
+// Only available on platforms that ship a TLS backend (macOS / Linux / Windows);
+// wasi and android stub out http.system, so callers there must pass an explicit
+// HttpClient that satisfies the concept on the templated overload above.
 inline auto read_bytes(std::filesystem::path const& base,
                        std::string_view locator,
                        cppx::http::headers headers = {})
@@ -211,5 +217,6 @@ inline auto read_bytes(std::filesystem::path const& base,
     auto http_client = cppx::http::system::client{};
     return read_bytes(base, locator, http_client, std::move(headers));
 }
+#endif
 
 } // namespace cppx::resource::system

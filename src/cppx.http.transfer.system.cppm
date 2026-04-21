@@ -9,7 +9,7 @@ import cppx.http.transfer;
 import cppx.process;
 import cppx.process.system;
 
-#if !defined(__wasi__)
+#if !defined(__wasi__) && !defined(__ANDROID__)
 import cppx.http.system;
 #endif
 
@@ -131,7 +131,7 @@ inline auto get_text(HttpClient& http_client,
                      options_t const& options,
                      std::string_view url)
     -> std::expected<text_result_t, error_t> {
-#if defined(__wasi__)
+#if defined(__wasi__) || defined(__ANDROID__)
     (void)http_client;
     (void)options;
     (void)url;
@@ -151,7 +151,7 @@ inline auto get_text(HttpClient& http_client,
 
 inline auto get_text(options_t const& options, std::string_view url)
     -> std::expected<text_result_t, error_t> {
-#if defined(__wasi__)
+#if defined(__wasi__) || defined(__ANDROID__)
     (void)options;
     (void)url;
     return std::unexpected(unsupported_http("request"));
@@ -167,7 +167,7 @@ inline auto download_file(HttpClient& http_client,
                           std::string_view url,
                           std::filesystem::path const& path)
     -> std::expected<transfer_result_t, error_t> {
-#if defined(__wasi__)
+#if defined(__wasi__) || defined(__ANDROID__)
     (void)http_client;
     (void)options;
     (void)url;
@@ -210,7 +210,7 @@ inline auto download_file(options_t const& options,
                           std::string_view url,
                           std::filesystem::path const& path)
     -> std::expected<transfer_result_t, error_t> {
-#if defined(__wasi__)
+#if defined(__wasi__) || defined(__ANDROID__)
     (void)options;
     (void)url;
     (void)path;
