@@ -95,6 +95,8 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.sync.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.terminal.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.terminal.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.unicode.cppm
 )
@@ -137,10 +139,12 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.sync.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.terminal.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.terminal.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.unicode.cppm
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.7.4\""
+    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.8.0\""
 )
 
 if(PROJECT_IS_TOP_LEVEL)
@@ -1767,6 +1771,102 @@ if(PROJECT_IS_TOP_LEVEL)
     endif()
 endif()
 exon_copy_windows_asan_runtime(test-sync)
+
+add_executable(test-terminal)
+target_sources(test-terminal PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/terminal.cpp
+)
+target_link_libraries(test-terminal PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-terminal PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-terminal PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-terminal PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-terminal PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-terminal PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-terminal)
+
+add_executable(test-terminal_system)
+target_sources(test-terminal_system PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/terminal_system.cpp
+)
+target_link_libraries(test-terminal_system PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-terminal_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-terminal_system PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-terminal_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-terminal_system PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-terminal_system PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-terminal_system)
 
 add_executable(test-unicode)
 target_sources(test-unicode PRIVATE

@@ -3,7 +3,8 @@
 C++23 extension library for projects that want a small, composable
 standard-library-first foundation. `cppx` provides aggregate
 reflection, platform detection, environment and filesystem helpers,
-process/archive/checksum utilities, coroutine primitives, test
+process/archive/checksum utilities, terminal formatting primitives,
+coroutine primitives, test
 utilities, and HTTP building blocks. MIT License.
 
 ## What it is for
@@ -14,6 +15,8 @@ projects:
 - pure-by-default reflection and environment helpers
 - small filesystem, process, archive, and checksum utilities at the
   system boundary
+- reusable terminal formatting, capability detection, and live progress
+  helpers for CLI tools
 - coroutine primitives with deterministic test support
 - small test utilities for standalone executables
 - HTTP types, parser/serializer, client/server/transfer helpers, and
@@ -42,6 +45,8 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.os.system` | System-backed OS helpers such as `open_url`. |
 | `cppx.process` | Process specs/results and `process_error` types for child-process work. |
 | `cppx.process.system` | System-backed `run` and `capture` helpers with timeout/cwd/env override support. |
+| `cppx.terminal` | Pure terminal formatting primitives such as status cells, sections, stages, tail excerpts, and progress frames. |
+| `cppx.terminal.system` | System-backed terminal capability detection, `NO_COLOR`/TTY/CI handling, Windows VT setup, and live progress rendering. |
 | `cppx.archive` | Archive extraction specs and error types. |
 | `cppx.archive.system` | System-backed archive extraction helpers. |
 | `cppx.checksum` | Pure checksum parsing/normalization helpers and error types. |
@@ -217,6 +222,35 @@ int main() {
 Use `cppx.sync` when you want a small reusable queue + worker lifecycle
 surface for background submission, duplicate suppression, and orderly
 shutdown without introducing a scheduler or coroutine runtime.
+
+### Terminal output
+
+```cpp
+import cppx.terminal;
+import cppx.terminal.system;
+import std;
+
+int main() {
+    auto options = cppx::terminal::TerminalOptions{
+        .color_env = "MYTOOL_COLOR",
+        .progress_env = "MYTOOL_PROGRESS",
+    };
+    auto color = cppx::terminal::system::stdout_color_enabled(options);
+
+    std::println("{}",
+                 cppx::terminal::stage("build", 1, 3, "app", color));
+    std::println("{}",
+                 cppx::terminal::status_cell(
+                     cppx::terminal::StatusKind::ok,
+                     color));
+}
+```
+
+`cppx.terminal` is pure and does not prescribe CLI policy. Tools keep
+their own output modes and environment variable names, then pass those
+choices into `TerminalOptions`. The system layer follows the `NO_COLOR`
+convention, treats `TERM=dumb` and generic CI as non-interactive in auto
+mode, and uses Windows virtual terminal processing when it is available.
 
 ### HTTP client
 
@@ -397,7 +431,7 @@ macOS/Linux.
 
 ```toml
 [dependencies]
-"github.com/misut/cppx" = "1.7.4"
+"github.com/misut/cppx" = "1.8.0"
 ```
 
 ### CMake
@@ -406,7 +440,7 @@ macOS/Linux.
 include(FetchContent)
 FetchContent_Declare(cppx
     GIT_REPOSITORY https://github.com/misut/cppx.git
-    GIT_TAG v1.7.4
+    GIT_TAG v1.8.0
     GIT_SHALLOW ON
 )
 FetchContent_MakeAvailable(cppx)
@@ -418,12 +452,12 @@ target_link_libraries(your_target PRIVATE cppx)
 - `cppx.reflect` supports aggregate types with up to 24 direct fields.
 - Field-name extraction currently targets Clang and MSVC.
 - Nested aggregates may need an explicit descriptor in higher-level libraries that build on reflection.
-- `import cppx;` is intentionally small. Filesystem, process, archive, checksum, HTTP, async, and sync modules remain opt-in imports.
+- `import cppx;` is intentionally small. Filesystem, process, terminal, archive, checksum, HTTP, async, and sync modules remain opt-in imports.
 - `cppx.http.system.test` and `cppx.async.system.test` are opt-in test seams. They are not re-exported from `import cppx;`.
 - `cppx.sync::work_queue<T>` and `cppx.sync::coalescing_queue<Key, T>` drain already-queued work after `close()` and only return `std::nullopt` once the queue is both closed and empty.
 - `cppx.sync::coalescing_queue<Key, T>` suppresses duplicate keys only while an item is still queued. The key is released as soon as the item is popped, not when downstream processing finishes.
 - `cppx.sync::background_worker` is intentionally a thin single-thread lifecycle wrapper. It is not a scheduler, coroutine bridge, thread pool, or generic task-executor layer.
-- System modules (`cppx.env.system`, `cppx.fs.system`, `cppx.os.system`, `cppx.process.system`, `cppx.archive.system`, `cppx.checksum.system`, `cppx.async.system`, `cppx.http.system`, `cppx.http.async.system`, `cppx.http.transfer.system`) are the boundary where real OS/network effects occur.
+- System modules (`cppx.env.system`, `cppx.fs.system`, `cppx.os.system`, `cppx.process.system`, `cppx.terminal.system`, `cppx.archive.system`, `cppx.checksum.system`, `cppx.async.system`, `cppx.http.system`, `cppx.http.async.system`, `cppx.http.transfer.system`) are the boundary where real OS/network effects occur.
 
 ## Tested behavior
 
@@ -432,7 +466,7 @@ Current tests cover:
 - reflection field count, field access, and field names
 - platform detection and wildcard matching
 - pure env helpers and system-backed env lookup
-- filesystem writes, process execution, archive extraction, and checksum helpers
+- filesystem writes, process execution, terminal formatting/capability helpers, archive extraction, and checksum helpers
 - resource classification, unified resource reads, and Unicode boundary/UTF-16 conversion helpers
 - synchronization queues, duplicate suppression, background worker exception capture, and orderly queue/worker shutdown
 - shared sync/async network transport concepts and null helpers
