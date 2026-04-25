@@ -5,6 +5,10 @@ module;
 #if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
+#elif defined(__wasi__)
+// wasi-sdk lacks terminal-control primitives. Render-mode detection
+// degrades to "no terminal", which is the correct answer for hosted
+// wasi runtimes (no controlling TTY, no resize signals).
 #else
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -243,6 +247,13 @@ std::size_t terminal_width() {
     return static_cast<std::size_t>(
         std::max<SHORT>(0, info.srWindow.Right - info.srWindow.Left + 1));
 }
+
+#elif defined(__wasi__)
+
+void enable_vt_on_windows() {}
+bool stdout_is_terminal() { return false; }
+bool stderr_is_terminal() { return false; }
+std::size_t terminal_width() { return 0; }
 
 #else
 
