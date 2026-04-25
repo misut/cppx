@@ -110,7 +110,7 @@ inline auto move_stripped_tree(std::filesystem::path const& root,
                                int strip_components)
     -> std::expected<void, cppx::archive::archive_error> {
     for (auto const& entry : std::filesystem::recursive_directory_iterator{root}) {
-        auto relative = std::filesystem::relative(entry.path(), root);
+        auto relative = entry.path().lexically_relative(root);
         auto stripped = strip_relative(relative, strip_components);
         if (!stripped)
             continue;

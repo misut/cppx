@@ -188,7 +188,7 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.test.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.unicode.cppm
     PROPERTIES COMPILE_DEFINITIONS
-    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.9.1\""
+    "EXON_PKG_NAME=\"cppx\";EXON_PKG_VERSION=\"1.9.2\""
 )
 
 if(PROJECT_IS_TOP_LEVEL)
