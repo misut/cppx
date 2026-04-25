@@ -1,0 +1,13 @@
+[package]
+name = "cppx-agent"
+version = "0.1.0"
+description = "Reference agent CLI built from cppx primitives"
+type = "bin"
+standard = 23
+build-system = "cmake"
+
+[sync]
+cmake-in-root = false
+
+[dependencies.path]
+cppx = "../.."

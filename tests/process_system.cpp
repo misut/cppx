@@ -153,6 +153,45 @@ void test_capture_timeout() {
              "capture returns timeout exit code");
 }
 
+void test_spawn_streams_captured_output() {
+    auto spec = cppx::process::ProcessStreamSpec{};
+#if defined(_WIN32)
+    spec.program = "cmd";
+    spec.args = {"/c", "(echo stream-out)&(echo stream-err 1>&2)&exit /b 5"};
+#else
+    spec.program = "sh";
+    spec.args = {"-c", "printf stream-out; printf stream-err >&2; exit 5"};
+#endif
+
+    auto child = cppx::process::system::spawn(std::move(spec));
+    tc.check(child.has_value(), "spawn returns child process");
+    if (!child)
+        return;
+
+    auto stdout_seen = false;
+    auto stderr_seen = false;
+    auto exited = false;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{3};
+    while (std::chrono::steady_clock::now() < deadline) {
+        auto event = child->wait_event();
+        if (!event)
+            break;
+        if (event->kind == cppx::process::ProcessEventKind::stdout_chunk)
+            stdout_seen = event->text.contains("stream-out");
+        if (event->kind == cppx::process::ProcessEventKind::stderr_chunk)
+            stderr_seen = event->text.contains("stream-err");
+        if (event->kind == cppx::process::ProcessEventKind::exited) {
+            exited = true;
+            tc.check_eq(event->exit_code, 5, "spawn preserves exit code");
+            break;
+        }
+    }
+
+    tc.check(stdout_seen, "spawn emits stdout chunk");
+    tc.check(stderr_seen, "spawn emits stderr chunk");
+    tc.check(exited, "spawn emits exit event");
+}
+
 #if !defined(_WIN32)
 void test_run_normalizes_signal_exit() {
     auto result = cppx::process::system::run({
@@ -173,6 +212,7 @@ int main() {
     test_run_timeout();
     test_capture_collects_stdout_stderr_and_exit_code();
     test_capture_timeout();
+    test_spawn_streams_captured_output();
 #if !defined(_WIN32)
     test_run_normalizes_signal_exit();
 #endif

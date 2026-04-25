@@ -56,4 +56,23 @@ struct CapturedProcessResult {
     std::string stderr_text;
 };
 
+struct ProcessStreamSpec : ProcessSpec {
+    std::size_t output_limit = 5 * 1024 * 1024;
+};
+
+enum class ProcessEventKind {
+    stdout_chunk,
+    stderr_chunk,
+    exited,
+    failed,
+};
+
+struct ProcessEvent {
+    ProcessEventKind kind = ProcessEventKind::stdout_chunk;
+    std::string text;
+    int exit_code = 0;
+    bool timed_out = false;
+    std::optional<process_error> error;
+};
+
 } // namespace cppx::process
