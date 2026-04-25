@@ -5,7 +5,7 @@
 // Limitations:
 //   - Aggregates with nested aggregates may overcount due to brace elision;
 //     use an explicit descriptor override for such types.
-//   - Max 24 direct fields.
+//   - Max 64 direct fields.
 //   - Clang (__PRETTY_FUNCTION__) / MSVC (__FUNCSIG__).
 //   - Requires T to be default-constructible (for name extraction).
 
@@ -31,7 +31,7 @@ consteval bool is_n_initializable() {
     }(std::make_index_sequence<N>{});
 }
 
-inline constexpr std::size_t kMaxFields = 24;
+inline constexpr std::size_t kMaxFields = 64;
 
 // Count fields: largest N in [0, kMaxFields] for which T{any, ..., any} compiles.
 template<typename T>
@@ -99,7 +99,47 @@ constexpr auto to_tuple(T&& obj) noexcept {
     else if constexpr (N == 22) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v); }
     else if constexpr (N == 23) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w); }
     else if constexpr (N == 24) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x); }
-    else { static_assert(N <= 24, "cppx.reflect: field count out of range"); }
+    else if constexpr (N == 25) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y); }
+    else if constexpr (N == 26) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z); }
+    else if constexpr (N == 27) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A); }
+    else if constexpr (N == 28) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B); }
+    else if constexpr (N == 29) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C); }
+    else if constexpr (N == 30) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D); }
+    else if constexpr (N == 31) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E); }
+    else if constexpr (N == 32) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F); }
+    else if constexpr (N == 33) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G); }
+    else if constexpr (N == 34) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H); }
+    else if constexpr (N == 35) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I); }
+    else if constexpr (N == 36) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J); }
+    else if constexpr (N == 37) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K); }
+    else if constexpr (N == 38) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L); }
+    else if constexpr (N == 39) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M); }
+    else if constexpr (N == 40) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_); }
+    else if constexpr (N == 41) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O); }
+    else if constexpr (N == 42) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P); }
+    else if constexpr (N == 43) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q); }
+    else if constexpr (N == 44) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R); }
+    else if constexpr (N == 45) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S); }
+    else if constexpr (N == 46) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_); }
+    else if constexpr (N == 47) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U); }
+    else if constexpr (N == 48) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V); }
+    else if constexpr (N == 49) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W); }
+    else if constexpr (N == 50) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X); }
+    else if constexpr (N == 51) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y); }
+    else if constexpr (N == 52) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z); }
+    else if constexpr (N == 53) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa); }
+    else if constexpr (N == 54) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb); }
+    else if constexpr (N == 55) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc); }
+    else if constexpr (N == 56) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd); }
+    else if constexpr (N == 57) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee); }
+    else if constexpr (N == 58) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff); }
+    else if constexpr (N == 59) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg); }
+    else if constexpr (N == 60) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg,hh] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg,hh); }
+    else if constexpr (N == 61) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg,hh,ii] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg,hh,ii); }
+    else if constexpr (N == 62) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg,hh,ii,jj] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg,hh,ii,jj); }
+    else if constexpr (N == 63) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg,hh,ii,jj,kk] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg,hh,ii,jj,kk); }
+    else if constexpr (N == 64) { auto& [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg,hh,ii,jj,kk,ll] = obj; return std::tie(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N_,O,P,Q,R,S,T_,U,V,W,X,Y,Z,aa,bb,cc,dd,ee,ff,gg,hh,ii,jj,kk,ll); }
+    else { static_assert(N <= 64, "cppx.reflect: field count out of range"); }
 }
 
 // Fake static instance used for taking compile-time pointers to fields.

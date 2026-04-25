@@ -431,7 +431,7 @@ macOS/Linux.
 
 ```toml
 [dependencies]
-"github.com/misut/cppx" = "1.8.0"
+"github.com/misut/cppx" = "1.9.0"
 ```
 
 ### CMake
@@ -440,7 +440,7 @@ macOS/Linux.
 include(FetchContent)
 FetchContent_Declare(cppx
     GIT_REPOSITORY https://github.com/misut/cppx.git
-    GIT_TAG v1.8.0
+    GIT_TAG v1.9.0
     GIT_SHALLOW ON
 )
 FetchContent_MakeAvailable(cppx)
@@ -449,7 +449,7 @@ target_link_libraries(your_target PRIVATE cppx)
 
 ## Notes and limits
 
-- `cppx.reflect` supports aggregate types with up to 24 direct fields.
+- `cppx.reflect` supports aggregate types with up to 64 direct fields.
 - Field-name extraction currently targets Clang and MSVC.
 - Nested aggregates may need an explicit descriptor in higher-level libraries that build on reflection.
 - `import cppx;` is intentionally small. Filesystem, process, terminal, archive, checksum, HTTP, async, and sync modules remain opt-in imports.
