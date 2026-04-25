@@ -298,4 +298,265 @@ std::string format_progress_frame(ProgressSnapshot const& snapshot,
     return out;
 }
 
+enum class KeyCode {
+    unknown,
+    character,
+    enter,
+    escape,
+    backspace,
+    tab,
+    arrow_up,
+    arrow_down,
+    arrow_left,
+    arrow_right,
+    home,
+    end,
+    page_up,
+    page_down,
+    delete_key,
+    ctrl_c,
+    ctrl_d,
+};
+
+struct KeyEvent {
+    KeyCode code = KeyCode::unknown;
+    std::string text;
+    bool alt = false;
+};
+
+std::vector<KeyEvent> parse_key_events(std::string_view bytes) {
+    auto events = std::vector<KeyEvent>{};
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+        auto ch = static_cast<unsigned char>(bytes[i]);
+        if (ch == '\r' || ch == '\n') {
+            events.push_back({.code = KeyCode::enter});
+        } else if (ch == '\t') {
+            events.push_back({.code = KeyCode::tab});
+        } else if (ch == 0x7f || ch == '\b') {
+            events.push_back({.code = KeyCode::backspace});
+        } else if (ch == 0x03) {
+            events.push_back({.code = KeyCode::ctrl_c});
+        } else if (ch == 0x04) {
+            events.push_back({.code = KeyCode::ctrl_d});
+        } else if (ch == 0x1b) {
+            if (i + 2 < bytes.size() && bytes[i + 1] == '[') {
+                auto third = bytes[i + 2];
+                switch (third) {
+                case 'A':
+                    events.push_back({.code = KeyCode::arrow_up});
+                    i += 2;
+                    continue;
+                case 'B':
+                    events.push_back({.code = KeyCode::arrow_down});
+                    i += 2;
+                    continue;
+                case 'C':
+                    events.push_back({.code = KeyCode::arrow_right});
+                    i += 2;
+                    continue;
+                case 'D':
+                    events.push_back({.code = KeyCode::arrow_left});
+                    i += 2;
+                    continue;
+                case 'H':
+                    events.push_back({.code = KeyCode::home});
+                    i += 2;
+                    continue;
+                case 'F':
+                    events.push_back({.code = KeyCode::end});
+                    i += 2;
+                    continue;
+                case '3':
+                case '5':
+                case '6':
+                    if (i + 3 < bytes.size() && bytes[i + 3] == '~') {
+                        events.push_back({
+                            .code = third == '3' ? KeyCode::delete_key
+                                  : third == '5' ? KeyCode::page_up
+                                                 : KeyCode::page_down,
+                        });
+                        i += 3;
+                        continue;
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+            events.push_back({.code = KeyCode::escape});
+        } else if (ch >= 0x20) {
+            events.push_back({
+                .code = KeyCode::character,
+                .text = std::string{static_cast<char>(ch)},
+            });
+        } else {
+            events.push_back({.code = KeyCode::unknown});
+        }
+    }
+    return events;
+}
+
+class PromptComposer {
+public:
+    bool apply(KeyEvent const& event) {
+        switch (event.code) {
+        case KeyCode::character:
+            buffer_.insert(cursor_, event.text);
+            cursor_ += event.text.size();
+            return true;
+        case KeyCode::backspace:
+            if (cursor_ == 0)
+                return false;
+            buffer_.erase(cursor_ - 1, 1);
+            --cursor_;
+            return true;
+        case KeyCode::delete_key:
+            if (cursor_ >= buffer_.size())
+                return false;
+            buffer_.erase(cursor_, 1);
+            return true;
+        case KeyCode::arrow_left:
+            if (cursor_ > 0)
+                --cursor_;
+            return true;
+        case KeyCode::arrow_right:
+            if (cursor_ < buffer_.size())
+                ++cursor_;
+            return true;
+        case KeyCode::home:
+            cursor_ = 0;
+            return true;
+        case KeyCode::end:
+            cursor_ = buffer_.size();
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    void set(std::string value) {
+        buffer_ = std::move(value);
+        cursor_ = buffer_.size();
+    }
+
+    void clear() {
+        buffer_.clear();
+        cursor_ = 0;
+    }
+
+    std::string_view text() const { return buffer_; }
+    std::size_t cursor() const { return cursor_; }
+
+private:
+    std::string buffer_;
+    std::size_t cursor_ = 0;
+};
+
+class CommandHistory {
+public:
+    void push(std::string command) {
+        if (command.empty())
+            return;
+        if (!entries_.empty() && entries_.back() == command) {
+            reset();
+            return;
+        }
+        entries_.push_back(std::move(command));
+        reset();
+    }
+
+    std::optional<std::string_view> previous() {
+        if (entries_.empty())
+            return std::nullopt;
+        if (!cursor_)
+            cursor_ = entries_.size();
+        if (*cursor_ == 0)
+            return entries_.front();
+        --*cursor_;
+        return entries_[*cursor_];
+    }
+
+    std::optional<std::string_view> next() {
+        if (!cursor_)
+            return std::nullopt;
+        if (*cursor_ + 1 >= entries_.size()) {
+            reset();
+            return std::nullopt;
+        }
+        ++*cursor_;
+        return entries_[*cursor_];
+    }
+
+    void reset() {
+        cursor_.reset();
+    }
+
+    std::span<std::string const> entries() const {
+        return entries_;
+    }
+
+private:
+    std::vector<std::string> entries_;
+    std::optional<std::size_t> cursor_;
+};
+
+enum class InputKind {
+    empty,
+    prompt,
+    slash_command,
+    shell_command,
+};
+
+struct ClassifiedInput {
+    InputKind kind = InputKind::empty;
+    std::string body;
+};
+
+ClassifiedInput classify_input(std::string_view line) {
+    while (!line.empty() && std::isspace(static_cast<unsigned char>(line.front())))
+        line.remove_prefix(1);
+    while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back())))
+        line.remove_suffix(1);
+
+    if (line.empty())
+        return {};
+    if (line.front() == '/') {
+        line.remove_prefix(1);
+        return {
+            .kind = InputKind::slash_command,
+            .body = std::string{line},
+        };
+    }
+    if (line.front() == '!') {
+        line.remove_prefix(1);
+        return {
+            .kind = InputKind::shell_command,
+            .body = std::string{line},
+        };
+    }
+    return {
+        .kind = InputKind::prompt,
+        .body = std::string{line},
+    };
+}
+
+struct StatusLine {
+    std::string label;
+    std::string value;
+    StatusKind status = StatusKind::run;
+};
+
+std::string format_status_frame(std::span<StatusLine const> lines,
+                                bool color_enabled = false) {
+    auto out = std::string{};
+    for (auto const& line : lines) {
+        if (!out.empty())
+            out.push_back('\n');
+        out += std::format("  {} {}",
+                           status_cell(line.status, color_enabled),
+                           key_value(line.label, line.value, 10).substr(2));
+    }
+    return out;
+}
+
 } // namespace cppx::terminal

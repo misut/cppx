@@ -734,6 +734,53 @@ inline auto run_process(cppx::process::ProcessSpec const& spec, bool capture_out
 
 export namespace cppx::process::system {
 
+class ChildProcess {
+public:
+    struct state;
+
+    ChildProcess() = default;
+
+    ChildProcess(ChildProcess const&) = delete;
+    auto operator=(ChildProcess const&) -> ChildProcess& = delete;
+
+    ChildProcess(ChildProcess&& other) noexcept
+        : state_{std::move(other.state_)} {}
+
+    auto operator=(ChildProcess&& other) noexcept -> ChildProcess& {
+        if (this != &other) {
+            close();
+            state_ = std::move(other.state_);
+        }
+        return *this;
+    }
+
+    ~ChildProcess() {
+        close();
+    }
+
+    bool valid() const {
+        return state_ != nullptr;
+    }
+
+    std::optional<cppx::process::ProcessEvent> try_event();
+    std::optional<cppx::process::ProcessEvent> wait_event();
+    bool write_stdin(std::string_view text);
+    bool terminate();
+    void close();
+
+private:
+    explicit ChildProcess(std::shared_ptr<state> state)
+        : state_{std::move(state)} {}
+
+    friend auto spawn(cppx::process::ProcessStreamSpec spec)
+        -> std::expected<ChildProcess, cppx::process::process_error>;
+
+    std::shared_ptr<state> state_;
+};
+
+auto spawn(cppx::process::ProcessStreamSpec spec)
+    -> std::expected<ChildProcess, cppx::process::process_error>;
+
 inline auto run(cppx::process::ProcessSpec const& spec)
     -> std::expected<cppx::process::ProcessResult, cppx::process::process_error> {
     if (spec.program.empty())
@@ -760,6 +807,456 @@ inline auto capture(cppx::process::ProcessSpec const& spec)
         .stdout_text = std::move(result->stdout_text),
         .stderr_text = std::move(result->stderr_text),
     };
+}
+
+} // namespace cppx::process::system
+
+namespace cppx::process::system {
+
+struct ChildProcess::state {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<cppx::process::ProcessEvent> events;
+    std::thread worker;
+    std::atomic<bool> stop_requested = false;
+    bool finished = false;
+#if defined(__APPLE__) || defined(__linux__)
+    std::mutex pid_mutex;
+    pid_t pid = -1;
+#endif
+
+    void push(cppx::process::ProcessEvent event) {
+        {
+            auto lock = std::lock_guard{mutex};
+            events.push_back(std::move(event));
+        }
+        cv.notify_all();
+    }
+};
+
+namespace stream_detail {
+
+inline void append_limited(std::string_view text,
+                           std::size_t limit,
+                           std::string& out) {
+    if (out.size() >= limit)
+        return;
+    auto available = limit - out.size();
+    out.append(text.substr(0, available));
+}
+
+inline void push_captured_chunks(ChildProcess::state& state,
+                                 cppx::process::CapturedProcessResult const& result,
+                                 std::size_t output_limit) {
+    auto stdout_text = std::string{};
+    auto stderr_text = std::string{};
+    append_limited(result.stdout_text, output_limit, stdout_text);
+    append_limited(result.stderr_text, output_limit, stderr_text);
+
+    if (!stdout_text.empty()) {
+        state.push({
+            .kind = cppx::process::ProcessEventKind::stdout_chunk,
+            .text = std::move(stdout_text),
+        });
+    }
+    if (!stderr_text.empty()) {
+        state.push({
+            .kind = cppx::process::ProcessEventKind::stderr_chunk,
+            .text = std::move(stderr_text),
+        });
+    }
+    state.push({
+        .kind = cppx::process::ProcessEventKind::exited,
+        .exit_code = result.exit_code,
+        .timed_out = result.timed_out,
+    });
+}
+
+#if defined(__APPLE__) || defined(__linux__)
+inline void push_limited_chunk(ChildProcess::state& state,
+                               cppx::process::ProcessEventKind kind,
+                               std::string_view text,
+                               std::size_t output_limit,
+                               std::size_t& emitted) {
+    if (text.empty() || emitted >= output_limit)
+        return;
+    auto available = output_limit - emitted;
+    auto chunk = std::string{text.substr(0, available)};
+    emitted += chunk.size();
+    state.push({
+        .kind = kind,
+        .text = std::move(chunk),
+    });
+}
+
+inline bool drain_stream_fd(int& fd,
+                            ChildProcess::state& state,
+                            cppx::process::ProcessEventKind kind,
+                            std::size_t output_limit,
+                            std::size_t& emitted) {
+    auto buffer = std::array<char, 4096>{};
+    while (fd >= 0) {
+        auto n = ::read(fd, buffer.data(), buffer.size());
+        if (n > 0) {
+            push_limited_chunk(
+                state,
+                kind,
+                std::string_view{buffer.data(), static_cast<std::size_t>(n)},
+                output_limit,
+                emitted);
+            continue;
+        }
+        if (n == 0) {
+            cppx::process::detail::posix::close_fd(fd);
+            return true;
+        }
+        if (errno == EINTR)
+            continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return true;
+        cppx::process::detail::posix::close_fd(fd);
+        return false;
+    }
+    return true;
+}
+#endif
+
+} // namespace stream_detail
+
+std::optional<cppx::process::ProcessEvent> ChildProcess::try_event() {
+    if (!state_)
+        return std::nullopt;
+
+    auto lock = std::lock_guard{state_->mutex};
+    if (state_->events.empty())
+        return std::nullopt;
+
+    auto event = std::optional<cppx::process::ProcessEvent>{
+        std::move(state_->events.front())};
+    state_->events.pop_front();
+    return event;
+}
+
+std::optional<cppx::process::ProcessEvent> ChildProcess::wait_event() {
+    if (!state_)
+        return std::nullopt;
+
+    auto lock = std::unique_lock{state_->mutex};
+    state_->cv.wait(lock, [&] {
+        return !state_->events.empty() || state_->finished;
+    });
+
+    if (state_->events.empty())
+        return std::nullopt;
+
+    auto event = std::optional<cppx::process::ProcessEvent>{
+        std::move(state_->events.front())};
+    state_->events.pop_front();
+    return event;
+}
+
+bool ChildProcess::write_stdin(std::string_view text) {
+    (void)text;
+    return false;
+}
+
+bool ChildProcess::terminate() {
+    if (!state_)
+        return false;
+    state_->stop_requested.store(true, std::memory_order_relaxed);
+#if defined(__APPLE__) || defined(__linux__)
+    auto lock = std::lock_guard{state_->pid_mutex};
+    if (state_->pid > 0)
+        return ::kill(state_->pid, SIGTERM) == 0;
+#endif
+    return false;
+}
+
+void ChildProcess::close() {
+    if (!state_)
+        return;
+    state_->stop_requested.store(true, std::memory_order_relaxed);
+    terminate();
+    if (state_->worker.joinable())
+        state_->worker.join();
+    state_.reset();
+}
+
+auto spawn(cppx::process::ProcessStreamSpec spec)
+    -> std::expected<ChildProcess, cppx::process::process_error> {
+    if (spec.program.empty())
+        return std::unexpected{cppx::process::process_error::empty_program};
+
+#if defined(__APPLE__) || defined(__linux__)
+    namespace posix = cppx::process::detail::posix;
+
+    auto error_pipe = posix::make_pipe_pair();
+    if (!error_pipe)
+        return std::unexpected{error_pipe.error()};
+
+    auto stdout_pipe = posix::make_pipe_pair(true);
+    if (!stdout_pipe) {
+        auto pair = *error_pipe;
+        posix::close_fd(pair.read_end);
+        posix::close_fd(pair.write_end);
+        return std::unexpected{stdout_pipe.error()};
+    }
+    auto stderr_pipe = posix::make_pipe_pair(true);
+    if (!stderr_pipe) {
+        auto pair = *error_pipe;
+        auto out = *stdout_pipe;
+        posix::close_fd(pair.read_end);
+        posix::close_fd(pair.write_end);
+        posix::close_fd(out.read_end);
+        posix::close_fd(out.write_end);
+        return std::unexpected{stderr_pipe.error()};
+    }
+
+    auto argv_storage = std::vector<std::string>{spec.program};
+    argv_storage.insert(argv_storage.end(), spec.args.begin(), spec.args.end());
+    auto argv = std::vector<char*>{};
+    argv.reserve(argv_storage.size() + 1);
+    for (auto& arg : argv_storage)
+        argv.push_back(arg.data());
+    argv.push_back(nullptr);
+
+    auto pid = ::fork();
+    if (pid < 0) {
+        auto pair = *error_pipe;
+        auto out = *stdout_pipe;
+        auto err = *stderr_pipe;
+        posix::close_fd(pair.read_end);
+        posix::close_fd(pair.write_end);
+        posix::close_fd(out.read_end);
+        posix::close_fd(out.write_end);
+        posix::close_fd(err.read_end);
+        posix::close_fd(err.write_end);
+        return std::unexpected{cppx::process::process_error::spawn_failed};
+    }
+
+    if (pid == 0) {
+        auto pair = *error_pipe;
+        auto out = *stdout_pipe;
+        auto err = *stderr_pipe;
+        posix::close_fd(pair.read_end);
+        posix::close_fd(out.read_end);
+        posix::close_fd(err.read_end);
+
+        if (::dup2(out.write_end, STDOUT_FILENO) < 0) {
+            auto failure = posix::child_failure{.stage = 'o', .error = errno};
+            [[maybe_unused]] auto ignored =
+                ::write(pair.write_end, &failure, sizeof(failure));
+            _exit(127);
+        }
+        if (::dup2(err.write_end, STDERR_FILENO) < 0) {
+            auto failure = posix::child_failure{.stage = 's', .error = errno};
+            [[maybe_unused]] auto ignored =
+                ::write(pair.write_end, &failure, sizeof(failure));
+            _exit(127);
+        }
+        posix::close_fd(out.write_end);
+        posix::close_fd(err.write_end);
+
+        if (!spec.cwd.empty() && ::chdir(spec.cwd.c_str()) != 0) {
+            auto failure = posix::child_failure{.stage = 'c', .error = errno};
+            [[maybe_unused]] auto ignored =
+                ::write(pair.write_end, &failure, sizeof(failure));
+            _exit(127);
+        }
+        for (auto const& [name, value] : spec.env_overrides) {
+            if (::setenv(name.c_str(), value.c_str(), 1) != 0) {
+                auto failure = posix::child_failure{.stage = 'e', .error = errno};
+                [[maybe_unused]] auto ignored =
+                    ::write(pair.write_end, &failure, sizeof(failure));
+                _exit(127);
+            }
+        }
+
+        ::execvp(argv[0], argv.data());
+        auto failure = posix::child_failure{.stage = 'x', .error = errno};
+        [[maybe_unused]] auto ignored =
+            ::write(pair.write_end, &failure, sizeof(failure));
+        _exit(127);
+    }
+
+    auto pair = *error_pipe;
+    auto out = *stdout_pipe;
+    auto err = *stderr_pipe;
+    posix::close_fd(pair.write_end);
+    posix::close_fd(out.write_end);
+    posix::close_fd(err.write_end);
+
+    auto state = std::make_shared<ChildProcess::state>();
+    state->pid = pid;
+    state->worker = std::thread{[
+        state,
+        pid,
+        pair,
+        out,
+        err,
+        spec = std::move(spec)
+    ] {
+        auto error_read = pair.read_end;
+        auto stdout_read = out.read_end;
+        auto stderr_read = err.read_end;
+        auto output_limit = spec.output_limit;
+        auto emitted = std::size_t{0};
+        auto result = cppx::process::ProcessResult{};
+        auto child_finished = false;
+        auto failure = posix::child_failure{};
+        auto failure_size = ssize_t{0};
+        auto deadline = spec.timeout
+            ? std::optional{std::chrono::steady_clock::now() + *spec.timeout}
+            : std::nullopt;
+
+        while (!child_finished || stdout_read >= 0 || stderr_read >= 0) {
+            if (!child_finished) {
+                int status = 0;
+                auto waited = ::waitpid(pid, &status, WNOHANG);
+                if (waited == pid) {
+                    child_finished = true;
+                    result.exit_code = cppx::process::detail::normalize_exit_status(status);
+                    {
+                        auto lock = std::lock_guard{state->pid_mutex};
+                        state->pid = -1;
+                    }
+                } else if (waited < 0 && errno != EINTR) {
+                    state->push({
+                        .kind = cppx::process::ProcessEventKind::failed,
+                        .error = cppx::process::process_error::wait_failed,
+                    });
+                    break;
+                }
+            }
+
+            if (!child_finished && deadline &&
+                std::chrono::steady_clock::now() >= *deadline) {
+                (void)::kill(pid, SIGKILL);
+                int status = 0;
+                while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+                child_finished = true;
+                result.exit_code = 124;
+                result.timed_out = true;
+                {
+                    auto lock = std::lock_guard{state->pid_mutex};
+                    state->pid = -1;
+                }
+            }
+
+            auto pollfds = std::array<pollfd, 2>{};
+            nfds_t nfds = 0;
+            if (stdout_read >= 0) {
+                pollfds[nfds++] = {
+                    .fd = stdout_read,
+                    .events = POLLIN | POLLHUP,
+                    .revents = 0,
+                };
+            }
+            if (stderr_read >= 0) {
+                pollfds[nfds++] = {
+                    .fd = stderr_read,
+                    .events = POLLIN | POLLHUP,
+                    .revents = 0,
+                };
+            }
+
+            if (nfds > 0) {
+                auto timeout_ms = 0;
+                if (!child_finished) {
+                    timeout_ms = 50;
+                    if (deadline) {
+                        auto remaining = std::chrono::duration_cast<
+                            std::chrono::milliseconds>(
+                            *deadline - std::chrono::steady_clock::now());
+                        timeout_ms = static_cast<int>(std::clamp<std::int64_t>(
+                            remaining.count(),
+                            0,
+                            50));
+                    }
+                }
+
+                auto rc = ::poll(pollfds.data(), nfds, timeout_ms);
+                if (rc > 0) {
+                    if (stdout_read >= 0)
+                        (void)stream_detail::drain_stream_fd(
+                            stdout_read,
+                            *state,
+                            cppx::process::ProcessEventKind::stdout_chunk,
+                            output_limit,
+                            emitted);
+                    if (stderr_read >= 0)
+                        (void)stream_detail::drain_stream_fd(
+                            stderr_read,
+                            *state,
+                            cppx::process::ProcessEventKind::stderr_chunk,
+                            output_limit,
+                            emitted);
+                }
+            } else if (!child_finished) {
+                std::this_thread::sleep_for(std::chrono::milliseconds{10});
+            } else {
+                break;
+            }
+        }
+
+        if (error_read >= 0) {
+            failure_size = ::read(error_read, &failure, sizeof(failure));
+            posix::close_fd(error_read);
+        }
+        posix::close_fd(stdout_read);
+        posix::close_fd(stderr_read);
+
+        if (failure_size == static_cast<ssize_t>(sizeof(failure))) {
+            auto error = cppx::process::process_error::spawn_failed;
+            if (failure.stage == 'c')
+                error = cppx::process::process_error::cwd_unavailable;
+            else if (failure.stage == 'e')
+                error = cppx::process::process_error::environment_failed;
+            state->push({
+                .kind = cppx::process::ProcessEventKind::failed,
+                .error = error,
+            });
+        } else {
+            state->push({
+                .kind = cppx::process::ProcessEventKind::exited,
+                .exit_code = result.exit_code,
+                .timed_out = result.timed_out,
+            });
+        }
+
+        {
+            auto lock = std::lock_guard{state->mutex};
+            state->finished = true;
+        }
+        state->cv.notify_all();
+    }};
+
+    return ChildProcess{std::move(state)};
+#else
+    auto state = std::make_shared<ChildProcess::state>();
+    state->worker = std::thread{[state, spec = std::move(spec)] {
+        auto captured = cppx::process::system::capture(spec);
+        if (!captured) {
+            state->push({
+                .kind = cppx::process::ProcessEventKind::failed,
+                .error = captured.error(),
+            });
+        } else {
+            stream_detail::push_captured_chunks(
+                *state,
+                *captured,
+                spec.output_limit);
+        }
+
+        {
+            auto lock = std::lock_guard{state->mutex};
+            state->finished = true;
+        }
+        state->cv.notify_all();
+    }};
+
+    return ChildProcess{std::move(state)};
+#endif
 }
 
 } // namespace cppx::process::system

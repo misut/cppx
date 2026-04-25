@@ -11,6 +11,7 @@ module;
 // wasi runtimes (no controlling TTY, no resize signals).
 #else
 #include <sys/ioctl.h>
+#include <termios.h>
 #include <unistd.h>
 #endif
 
@@ -49,6 +50,39 @@ bool stdout_progress_enabled(cppx::terminal::TerminalOptions const& options = {}
 bool stdout_hyperlinks_enabled(cppx::terminal::TerminalOptions const& options = {});
 bool stdout_unicode_enabled(cppx::terminal::TerminalOptions const& options = {});
 std::size_t terminal_width();
+
+struct TerminalSize {
+    std::size_t columns = 0;
+    std::size_t rows = 0;
+};
+
+class RawMode {
+public:
+    RawMode();
+    ~RawMode();
+
+    RawMode(RawMode const&) = delete;
+    auto operator=(RawMode const&) -> RawMode& = delete;
+
+    RawMode(RawMode&& other) noexcept;
+    auto operator=(RawMode&& other) noexcept -> RawMode&;
+
+    bool active() const;
+    void restore();
+
+private:
+#if defined(_WIN32)
+    HANDLE handle_ = nullptr;
+    DWORD original_mode_ = 0;
+#elif defined(__wasi__)
+#else
+    termios original_{};
+#endif
+    bool active_ = false;
+};
+
+std::optional<cppx::terminal::KeyEvent> read_key_event();
+TerminalSize terminal_size();
 
 class LiveProgressRenderer {
 public:
@@ -248,12 +282,106 @@ std::size_t terminal_width() {
         std::max<SHORT>(0, info.srWindow.Right - info.srWindow.Left + 1));
 }
 
+TerminalSize terminal_size() {
+    auto handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (handle == INVALID_HANDLE_VALUE || handle == nullptr)
+        return {};
+    CONSOLE_SCREEN_BUFFER_INFO info{};
+    if (!GetConsoleScreenBufferInfo(handle, &info))
+        return {};
+    return {
+        .columns = static_cast<std::size_t>(
+            std::max<SHORT>(0, info.srWindow.Right - info.srWindow.Left + 1)),
+        .rows = static_cast<std::size_t>(
+            std::max<SHORT>(0, info.srWindow.Bottom - info.srWindow.Top + 1)),
+    };
+}
+
+RawMode::RawMode() {
+    handle_ = GetStdHandle(STD_INPUT_HANDLE);
+    if (handle_ == INVALID_HANDLE_VALUE || handle_ == nullptr)
+        return;
+    if (!GetConsoleMode(handle_, &original_mode_))
+        return;
+    auto mode = original_mode_;
+    mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+    mode |= ENABLE_PROCESSED_INPUT;
+    if (SetConsoleMode(handle_, mode))
+        active_ = true;
+}
+
+RawMode::~RawMode() {
+    restore();
+}
+
+RawMode::RawMode(RawMode&& other) noexcept {
+    handle_ = other.handle_;
+    original_mode_ = other.original_mode_;
+    active_ = other.active_;
+    other.handle_ = nullptr;
+    other.active_ = false;
+}
+
+auto RawMode::operator=(RawMode&& other) noexcept -> RawMode& {
+    if (this != &other) {
+        restore();
+        handle_ = other.handle_;
+        original_mode_ = other.original_mode_;
+        active_ = other.active_;
+        other.handle_ = nullptr;
+        other.active_ = false;
+    }
+    return *this;
+}
+
+bool RawMode::active() const {
+    return active_;
+}
+
+void RawMode::restore() {
+    if (active_ && handle_ != nullptr && handle_ != INVALID_HANDLE_VALUE)
+        SetConsoleMode(handle_, original_mode_);
+    active_ = false;
+}
+
+std::optional<cppx::terminal::KeyEvent> read_key_event() {
+    auto handle = GetStdHandle(STD_INPUT_HANDLE);
+    if (handle == INVALID_HANDLE_VALUE || handle == nullptr)
+        return std::nullopt;
+    char buffer[16]{};
+    DWORD read = 0;
+    if (!ReadFile(handle, buffer, sizeof(buffer), &read, nullptr) || read == 0)
+        return std::nullopt;
+    auto events = cppx::terminal::parse_key_events(
+        std::string_view{buffer, static_cast<std::size_t>(read)});
+    if (events.empty())
+        return std::nullopt;
+    return events.front();
+}
+
 #elif defined(__wasi__)
 
 void enable_vt_on_windows() {}
 bool stdout_is_terminal() { return false; }
 bool stderr_is_terminal() { return false; }
 std::size_t terminal_width() { return 0; }
+TerminalSize terminal_size() { return {}; }
+RawMode::RawMode() = default;
+RawMode::~RawMode() = default;
+RawMode::RawMode(RawMode&& other) noexcept {
+    active_ = other.active_;
+    other.active_ = false;
+}
+auto RawMode::operator=(RawMode&& other) noexcept -> RawMode& {
+    if (this != &other) {
+        active_ = other.active_;
+        other.active_ = false;
+    }
+    return *this;
+}
+bool RawMode::active() const { return false; }
+void RawMode::restore() { active_ = false; }
+std::optional<cppx::terminal::KeyEvent> read_key_event() { return std::nullopt; }
 
 #else
 
@@ -272,6 +400,69 @@ std::size_t terminal_width() {
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0 || size.ws_col == 0)
         return 0;
     return static_cast<std::size_t>(size.ws_col);
+}
+
+TerminalSize terminal_size() {
+    winsize size{};
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0)
+        return {};
+    return {
+        .columns = static_cast<std::size_t>(size.ws_col),
+        .rows = static_cast<std::size_t>(size.ws_row),
+    };
+}
+
+RawMode::RawMode() {
+    if (::tcgetattr(STDIN_FILENO, &original_) != 0)
+        return;
+    auto raw = original_;
+    raw.c_lflag &= static_cast<tcflag_t>(~(ECHO | ICANON));
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    if (::tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0)
+        active_ = true;
+}
+
+RawMode::~RawMode() {
+    restore();
+}
+
+RawMode::RawMode(RawMode&& other) noexcept
+    : original_(other.original_)
+    , active_(other.active_) {
+    other.active_ = false;
+}
+
+auto RawMode::operator=(RawMode&& other) noexcept -> RawMode& {
+    if (this != &other) {
+        restore();
+        original_ = other.original_;
+        active_ = other.active_;
+        other.active_ = false;
+    }
+    return *this;
+}
+
+bool RawMode::active() const {
+    return active_;
+}
+
+void RawMode::restore() {
+    if (active_)
+        ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_);
+    active_ = false;
+}
+
+std::optional<cppx::terminal::KeyEvent> read_key_event() {
+    auto buffer = std::array<char, 16>{};
+    auto count = ::read(STDIN_FILENO, buffer.data(), buffer.size());
+    if (count <= 0)
+        return std::nullopt;
+    auto events = cppx::terminal::parse_key_events(
+        std::string_view{buffer.data(), static_cast<std::size_t>(count)});
+    if (events.empty())
+        return std::nullopt;
+    return events.front();
 }
 
 #endif

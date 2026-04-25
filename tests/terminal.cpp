@@ -129,6 +129,63 @@ void test_shimmer_label() {
              "shimmer label moves right");
 }
 
+void test_key_event_parser_and_prompt_composer() {
+    auto events = cppx::terminal::parse_key_events("ab\x1b[D\x7f\n");
+    tc.check_eq(events.size(), std::size_t{5}, "key parser returns events");
+    tc.check(events.at(0).code == cppx::terminal::KeyCode::character,
+             "character event parsed");
+    tc.check(events.at(2).code == cppx::terminal::KeyCode::arrow_left,
+             "arrow-left escape parsed");
+    tc.check(events.at(3).code == cppx::terminal::KeyCode::backspace,
+             "backspace parsed");
+    tc.check(events.at(4).code == cppx::terminal::KeyCode::enter,
+             "enter parsed");
+
+    auto composer = cppx::terminal::PromptComposer{};
+    composer.apply({.code = cppx::terminal::KeyCode::character, .text = "a"});
+    composer.apply({.code = cppx::terminal::KeyCode::character, .text = "b"});
+    composer.apply({.code = cppx::terminal::KeyCode::arrow_left});
+    composer.apply({.code = cppx::terminal::KeyCode::backspace});
+    tc.check_eq(std::string{composer.text()}, std::string{"b"},
+                "prompt composer edits at cursor");
+}
+
+void test_history_and_input_classification() {
+    auto history = cppx::terminal::CommandHistory{};
+    history.push("first");
+    history.push("second");
+    tc.check(history.previous() == std::optional<std::string_view>{"second"},
+             "history previous returns newest");
+    tc.check(history.previous() == std::optional<std::string_view>{"first"},
+             "history previous walks backward");
+    tc.check(history.next() == std::optional<std::string_view>{"second"},
+             "history next walks forward");
+
+    auto shell = cppx::terminal::classify_input("  !echo ok  ");
+    tc.check(shell.kind == cppx::terminal::InputKind::shell_command,
+             "shell command classified");
+    tc.check_eq(shell.body, std::string{"echo ok"}, "shell command body trimmed");
+
+    auto slash = cppx::terminal::classify_input("/help");
+    tc.check(slash.kind == cppx::terminal::InputKind::slash_command,
+             "slash command classified");
+    tc.check_eq(slash.body, std::string{"help"}, "slash command body");
+}
+
+void test_status_frame() {
+    auto lines = std::array{
+        cppx::terminal::StatusLine{
+            .label = "model",
+            .value = "fake",
+            .status = cppx::terminal::StatusKind::ok,
+        },
+    };
+    auto frame = cppx::terminal::format_status_frame(lines, false);
+    tc.check(frame.contains("OK"), "status frame includes status");
+    tc.check(frame.contains("model"), "status frame includes label");
+    tc.check(frame.contains("fake"), "status frame includes value");
+}
+
 int main() {
     test_capability_settings();
     test_style_disabled();
@@ -139,5 +196,8 @@ int main() {
     test_progress_frame();
     test_progress_frame_with_detail_lines();
     test_shimmer_label();
+    test_key_event_parser_and_prompt_composer();
+    test_history_and_input_classification();
+    test_status_frame();
     return tc.summary("cppx.terminal");
 }

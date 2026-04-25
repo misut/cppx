@@ -3,8 +3,8 @@
 C++23 extension library for projects that want a small, composable
 standard-library-first foundation. `cppx` provides aggregate
 reflection, platform detection, environment and filesystem helpers,
-process/archive/checksum utilities, terminal formatting primitives,
-coroutine primitives, test
+process/archive/checksum utilities, CLI/shell/terminal primitives,
+pseudo-terminal helpers, coroutine primitives, test
 utilities, and HTTP building blocks. MIT License.
 
 ## What it is for
@@ -17,6 +17,8 @@ projects:
   system boundary
 - reusable terminal formatting, capability detection, and live progress
   helpers for CLI tools
+- command parser, config overlay, shell command, shell job, and PTY
+  primitives for agent-style CLIs
 - coroutine primitives with deterministic test support
 - small test utilities for standalone executables
 - HTTP types, parser/serializer, client/server/transfer helpers, and
@@ -44,9 +46,14 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.os` | OS-facing capability declarations such as `open_error`. |
 | `cppx.os.system` | System-backed OS helpers such as `open_url`. |
 | `cppx.process` | Process specs/results and `process_error` types for child-process work. |
-| `cppx.process.system` | System-backed `run` and `capture` helpers with timeout/cwd/env override support. |
-| `cppx.terminal` | Pure terminal formatting primitives such as status cells, sections, stages, tail excerpts, and progress frames. |
-| `cppx.terminal.system` | System-backed terminal capability detection, `NO_COLOR`/TTY/CI handling, Windows VT setup, and live progress rendering. |
+| `cppx.process.system` | System-backed `run`, `capture`, and `spawn` helpers with timeout/cwd/env override support. |
+| `cppx.cli` | Pure command parser, help renderer, subcommand aliases, repeatable flags, `--`, and closest-command suggestions. |
+| `cppx.cli.config` | Source-agnostic config overlay for already-parsed defaults/user/project/profile/flag layers. |
+| `cppx.shell` | Explicit shell command builders and POSIX/PowerShell/cmd quoting helpers. |
+| `cppx.shell.system` | System-backed foreground shell execution plus background job registry helpers. |
+| `cppx.pty.system` | Pseudo-terminal spawn/read/write/resize helpers on POSIX and explicit unsupported reporting elsewhere. |
+| `cppx.terminal` | Pure terminal formatting and input primitives such as status cells, stages, key parsing, prompt composition, history, tail excerpts, and progress frames. |
+| `cppx.terminal.system` | System-backed terminal capability detection, `NO_COLOR`/TTY/CI handling, raw mode, Windows VT setup, and live progress rendering. |
 | `cppx.archive` | Archive extraction specs and error types. |
 | `cppx.archive.system` | System-backed archive extraction helpers. |
 | `cppx.checksum` | Pure checksum parsing/normalization helpers and error types. |
@@ -252,6 +259,39 @@ choices into `TerminalOptions`. The system layer follows the `NO_COLOR`
 convention, treats `TERM=dumb` and generic CI as non-interactive in auto
 mode, and uses Windows virtual terminal processing when it is available.
 
+### CLI and shell core
+
+```cpp
+import cppx.cli;
+import cppx.shell.system;
+import std;
+
+int main() {
+    auto root = cppx::cli::CommandSpec{
+        .name = "tool",
+        .subcommands = {{
+            .name = "exec",
+            .options = {{
+                .name = "json",
+                .arity = cppx::cli::OptionArity::none,
+            }},
+        }},
+    };
+    auto args = std::vector<std::string_view>{"exec", "--json"};
+    auto invocation = cppx::cli::parse(root, args);
+
+    auto shell = cppx::shell::system::run_foreground("printf ok");
+    if (shell)
+        std::print("{}", shell->output);
+}
+```
+
+`cppx.cli` and `cppx.cli.config` stay pure. `cppx.shell.system`,
+`cppx.process.system`, `cppx.terminal.system`, and `cppx.pty.system`
+are the real OS boundary. The `examples/agent_cli` package shows how
+these pieces compose into a fake-agent reference shell with `exec`,
+slash commands, foreground shell commands, and background jobs.
+
 ### HTTP client
 
 ```cpp
@@ -452,12 +492,13 @@ target_link_libraries(your_target PRIVATE cppx)
 - `cppx.reflect` supports aggregate types with up to 64 direct fields.
 - Field-name extraction currently targets Clang and MSVC.
 - Nested aggregates may need an explicit descriptor in higher-level libraries that build on reflection.
-- `import cppx;` is intentionally small. Filesystem, process, terminal, archive, checksum, HTTP, async, and sync modules remain opt-in imports.
+- `import cppx;` is intentionally small. Filesystem, process, CLI, shell, terminal, PTY, archive, checksum, HTTP, async, and sync modules remain opt-in imports.
 - `cppx.http.system.test` and `cppx.async.system.test` are opt-in test seams. They are not re-exported from `import cppx;`.
 - `cppx.sync::work_queue<T>` and `cppx.sync::coalescing_queue<Key, T>` drain already-queued work after `close()` and only return `std::nullopt` once the queue is both closed and empty.
 - `cppx.sync::coalescing_queue<Key, T>` suppresses duplicate keys only while an item is still queued. The key is released as soon as the item is popped, not when downstream processing finishes.
 - `cppx.sync::background_worker` is intentionally a thin single-thread lifecycle wrapper. It is not a scheduler, coroutine bridge, thread pool, or generic task-executor layer.
-- System modules (`cppx.env.system`, `cppx.fs.system`, `cppx.os.system`, `cppx.process.system`, `cppx.terminal.system`, `cppx.archive.system`, `cppx.checksum.system`, `cppx.async.system`, `cppx.http.system`, `cppx.http.async.system`, `cppx.http.transfer.system`) are the boundary where real OS/network effects occur.
+- `cppx.env::shell_quote` is only a whitespace-safe path helper for legacy command strings. Use `cppx.shell::quote_*` for deliberate shell quoting.
+- System modules (`cppx.env.system`, `cppx.fs.system`, `cppx.os.system`, `cppx.process.system`, `cppx.shell.system`, `cppx.pty.system`, `cppx.terminal.system`, `cppx.archive.system`, `cppx.checksum.system`, `cppx.async.system`, `cppx.http.system`, `cppx.http.async.system`, `cppx.http.transfer.system`) are the boundary where real OS/network effects occur.
 
 ## Tested behavior
 
@@ -466,7 +507,7 @@ Current tests cover:
 - reflection field count, field access, and field names
 - platform detection and wildcard matching
 - pure env helpers and system-backed env lookup
-- filesystem writes, process execution, terminal formatting/capability helpers, archive extraction, and checksum helpers
+- filesystem writes, process execution/stream events, CLI parsing/config overlay, shell command helpers, PTY smoke coverage, terminal formatting/input/capability helpers, archive extraction, and checksum helpers
 - resource classification, unified resource reads, and Unicode boundary/UTF-16 conversion helpers
 - synchronization queues, duplicate suppression, background worker exception capture, and orderly queue/worker shutdown
 - shared sync/async network transport concepts and null helpers
