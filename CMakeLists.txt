@@ -104,6 +104,8 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.bytes.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cli.config.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cli.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.system.cppm
@@ -125,9 +127,12 @@ target_sources(cppx-modules
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.process.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.process.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.pty.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.shell.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.shell.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.sync.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.terminal.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.terminal.system.cppm
@@ -148,6 +153,8 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.bytes.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.checksum.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cli.config.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cli.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.env.system.cppm
@@ -169,9 +176,12 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.platform.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.process.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.process.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.pty.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.reflect.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.resource.system.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.shell.cppm
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.shell.system.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.sync.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.terminal.cppm
     ${CMAKE_CURRENT_SOURCE_DIR}/src/cppx.terminal.system.cppm
@@ -711,6 +721,104 @@ if(PROJECT_IS_TOP_LEVEL)
 endif()
 exon_copy_windows_asan_runtime(test-checksum_system)
 exon_apply_msvc_test_silence(test-checksum_system)
+
+add_executable(test-cli)
+target_sources(test-cli PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli.cpp
+)
+target_link_libraries(test-cli PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-cli PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-cli PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-cli PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-cli PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-cli PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-cli)
+exon_apply_msvc_test_silence(test-cli)
+
+add_executable(test-cli_config)
+target_sources(test-cli_config PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_config.cpp
+)
+target_link_libraries(test-cli_config PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-cli_config PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-cli_config PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-cli_config PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-cli_config PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-cli_config PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-cli_config)
+exon_apply_msvc_test_silence(test-cli_config)
 
 add_executable(test-env)
 target_sources(test-env PRIVATE
@@ -1643,6 +1751,55 @@ endif()
 exon_copy_windows_asan_runtime(test-process_system)
 exon_apply_msvc_test_silence(test-process_system)
 
+add_executable(test-pty_system)
+target_sources(test-pty_system PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/pty_system.cpp
+)
+target_link_libraries(test-pty_system PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-pty_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-pty_system PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-pty_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-pty_system PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-pty_system PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-pty_system)
+exon_apply_msvc_test_silence(test-pty_system)
+
 add_executable(test-reflect)
 target_sources(test-reflect PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/reflect.cpp
@@ -1789,6 +1946,104 @@ if(PROJECT_IS_TOP_LEVEL)
 endif()
 exon_copy_windows_asan_runtime(test-resource_system)
 exon_apply_msvc_test_silence(test-resource_system)
+
+add_executable(test-shell)
+target_sources(test-shell PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/shell.cpp
+)
+target_link_libraries(test-shell PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-shell PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-shell PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-shell PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-shell PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-shell PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-shell)
+exon_apply_msvc_test_silence(test-shell)
+
+add_executable(test-shell_system)
+target_sources(test-shell_system PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/shell_system.cpp
+)
+target_link_libraries(test-shell_system PRIVATE
+    cppx-modules
+)
+
+if(PROJECT_IS_TOP_LEVEL)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+        target_compile_options(test-shell_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-shell_system PRIVATE
+            -fsanitize=address,undefined
+            -lssl
+            -lcrypto
+        )
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+
+        target_compile_options(test-shell_system PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+
+        target_link_options(test-shell_system PRIVATE
+            -fsanitize=address,undefined
+            -framework
+            Security
+            -Wl,-framework,CoreFoundation
+        )
+    endif()
+
+    if(WIN32)
+
+        target_compile_options(test-shell_system PRIVATE
+            /fsanitize=address
+        )
+    endif()
+endif()
+exon_copy_windows_asan_runtime(test-shell_system)
+exon_apply_msvc_test_silence(test-shell_system)
 
 add_executable(test-sync)
 target_sources(test-sync PRIVATE
