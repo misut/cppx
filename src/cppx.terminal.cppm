@@ -62,6 +62,7 @@ inline constexpr std::string_view red = "\x1b[31m";
 inline constexpr std::string_view green = "\x1b[32m";
 inline constexpr std::string_view yellow = "\x1b[33m";
 inline constexpr std::string_view cyan = "\x1b[36m";
+inline constexpr std::string_view bright_white = "\x1b[97m";
 
 } // namespace ansi
 
@@ -204,7 +205,7 @@ bool is_ascii_label(std::string_view text) {
 void append_shimmer_char(std::string& out, char ch, bool active) {
     if (active) {
         out.append(ansi::bold);
-        out.append(ansi::cyan);
+        out.append(ansi::bright_white);
     } else {
         out.append(ansi::dim);
     }
@@ -254,13 +255,13 @@ void append_progress_timing(std::string& out, ProgressSnapshot const& snapshot) 
         out += std::format(" {:.1f}/s", snapshot.rate);
 }
 
-void append_progress_detail_lines(std::string& out, ProgressSnapshot const& snapshot) {
+void append_progress_detail_lines(std::string& out, ProgressSnapshot const& snapshot,
+                                  bool color_enabled) {
     for (auto const& line : snapshot.detail_lines) {
         if (line.empty())
             continue;
         out.push_back('\n');
-        out.append("    ");
-        out += line;
+        out += style(std::format("    {}", line), StyleRole::dim, color_enabled);
     }
 }
 
@@ -279,7 +280,7 @@ std::string format_progress_frame(ProgressSnapshot const& snapshot,
         append_progress_timing(out, snapshot);
         if (!snapshot.detail.empty())
             out += std::format("\n{}", style(snapshot.detail, StyleRole::dim, color_enabled));
-        append_progress_detail_lines(out, snapshot);
+        append_progress_detail_lines(out, snapshot, color_enabled);
         return out;
     }
 
@@ -293,7 +294,7 @@ std::string format_progress_frame(ProgressSnapshot const& snapshot,
     append_progress_timing(out, snapshot);
     if (!snapshot.detail.empty())
         out += std::format("\n{}", style(snapshot.detail, StyleRole::dim, color_enabled));
-    append_progress_detail_lines(out, snapshot);
+    append_progress_detail_lines(out, snapshot, color_enabled);
     return out;
 }
 
