@@ -94,10 +94,20 @@ void test_progress_frame_with_detail_lines() {
                       "    Building CXX object foo.o\n"
                       "    Linking app",
              "progress frame appends detail lines");
+
+    auto colored = cppx::terminal::format_progress_frame({
+        .done = 12,
+        .total = 56,
+        .percent = 21,
+        .label = "build",
+        .detail_lines = {"Building CXX object foo.o"},
+    }, 0, true);
+    tc.check(colored.contains("\n\x1b[2m    Building CXX object foo.o\x1b[0m"),
+             "progress frame dims detail lines when color is enabled");
 }
 
 std::string active_char(char ch) {
-    return std::format("\x1b[1m\x1b[36m{}\x1b[0m", ch);
+    return std::format("\x1b[1m\x1b[97m{}\x1b[0m", ch);
 }
 
 std::string dim_char(char ch) {
