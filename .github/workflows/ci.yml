@@ -1,6 +1,14 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "LICENSE"
+      - ".editorconfig"
+      - ".gitignore"
+      - ".claude/**"
   pull_request:
     branches: [main]
     paths-ignore:
@@ -11,7 +19,7 @@ on:
       - ".claude/**"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -36,11 +44,12 @@ jobs:
           sed -n 's/^"vfox:misut\/mise-intron"[[:space:]]*=[[:space:]]*"\([^"]*\)"$/intron=\1/p' mise.toml >> "$GITHUB_OUTPUT"
           sed -n 's/^"vfox:misut\/mise-exon"[[:space:]]*=[[:space:]]*"\([^"]*\)"$/exon=\1/p' mise.toml >> "$GITHUB_OUTPUT"
 
-      - name: Cache toolchains
-        uses: actions/cache@v5
+      - name: Restore toolchains
+        id: toolchain-cache
+        uses: actions/cache/restore@v5
         with:
           path: ~/.intron/toolchains
-          key: intron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.intron.toml') }}
+          key: intron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', '.intron.toml') }}
 
       - name: Install intron
         run: |
@@ -54,8 +63,16 @@ jobs:
       - name: Install toolchains
         run: intron install
 
-      - name: Cache exon
-        uses: actions/cache@v5
+      - name: Save toolchains
+        if: github.ref == 'refs/heads/main' && steps.toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.intron/toolchains
+          key: ${{ steps.toolchain-cache.outputs.cache-primary-key }}
+
+      - name: Restore exon
+        id: exon-cache
+        uses: actions/cache/restore@v5
         with:
           path: ~/.local/bin/exon
           key: exon-v${{ steps.tool-versions.outputs.exon }}-${{ runner.os }}-${{ runner.arch }}
@@ -70,6 +87,13 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Save exon
+        if: github.ref == 'refs/heads/main' && steps.exon-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.local/bin/exon
+          key: ${{ steps.exon-cache.outputs.cache-primary-key }}
 
       - name: Test
         run: |
@@ -88,11 +112,12 @@ jobs:
           sed -n 's/^"vfox:misut\/mise-intron"[[:space:]]*=[[:space:]]*"\([^"]*\)"$/intron=\1/p' mise.toml >> "$GITHUB_OUTPUT"
           sed -n 's/^"vfox:misut\/mise-exon"[[:space:]]*=[[:space:]]*"\([^"]*\)"$/exon=\1/p' mise.toml >> "$GITHUB_OUTPUT"
 
-      - name: Cache toolchains
-        uses: actions/cache@v5
+      - name: Restore toolchains
+        id: toolchain-cache
+        uses: actions/cache/restore@v5
         with:
           path: ~/.intron/toolchains
-          key: intron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.intron.toml') }}
+          key: intron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', '.intron.toml') }}
 
       - name: Install intron
         shell: pwsh
@@ -111,8 +136,16 @@ jobs:
         run: |
           intron install
 
-      - name: Cache exon
-        uses: actions/cache@v5
+      - name: Save toolchains
+        if: github.ref == 'refs/heads/main' && steps.toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.intron/toolchains
+          key: ${{ steps.toolchain-cache.outputs.cache-primary-key }}
+
+      - name: Restore exon
+        id: exon-cache
+        uses: actions/cache/restore@v5
         with:
           path: ~/.local/bin/exon.exe
           key: exon-v${{ steps.tool-versions.outputs.exon }}-${{ runner.os }}-${{ runner.arch }}
@@ -129,6 +162,13 @@ jobs:
           echo "$env:USERPROFILE\.local\bin" >> $env:GITHUB_PATH
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Save exon
+        if: github.ref == 'refs/heads/main' && steps.exon-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.local/bin/exon.exe
+          key: ${{ steps.exon-cache.outputs.cache-primary-key }}
 
       - name: Test
         shell: pwsh
