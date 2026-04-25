@@ -63,6 +63,16 @@ inline constexpr auto sample_zip_base64 = std::string_view{
     "AAAAGQAYAAAAAAABAAAApIFuAQAAcm9vdC9pbm5lci9zaGFyZS9pbmZvLnR4dFVUBQADEi3iaXV4CwABBPYBAAAEFAAAAFBLBQYA"
     "AAAABgAGAAQCAADGAQAAAAA="};
 
+inline constexpr auto sample_zip_symlink_alias_base64 = std::string_view{
+    "UEsDBBQAAAAAAAAAIQAAAAAAAAAAAAAAAAAFAAAAcm9vdC9QSwMEFAAAAAAAAAAhAAAAAAAAAAAAAAAAAAsAAAByb290L2lubmVy"
+    "L1BLAwQUAAAAAAAAACEAAAAAAAAAAAAAAAAADwAAAHJvb3QvaW5uZXIvYmluL1BLAwQUAAAAAAAAACEAMQUwuAgAAAAIAAAAFAAA"
+    "AHJvb3QvaW5uZXIvYmluL2NsYW5nY2xhbmctMjFQSwMEFAAAAAAAAAAhABDvAtENAAAADQAAABcAAAByb290L2lubmVyL2Jpbi9j"
+    "bGFuZy0yMWNsYW5nIGJpbmFyeQpQSwECFAMUAAAAAAAAACEAAAAAAAAAAAAAAAAABQAAAAAAAAAAAAAA7UEAAAAAcm9vdC9QSwEC"
+    "FAMUAAAAAAAAACEAAAAAAAAAAAAAAAAACwAAAAAAAAAAAAAA7UEjAAAAcm9vdC9pbm5lci9QSwECFAMUAAAAAAAAACEAAAAAAAAA"
+    "AAAAAAAADwAAAAAAAAAAAAAA7UFMAAAAcm9vdC9pbm5lci9iaW4vUEsBAhQDFAAAAAAAAAAhADEFMLgIAAAACAAAABQAAAAAAAAA"
+    "AAAAAO2heQAAAHJvb3QvaW5uZXIvYmluL2NsYW5nUEsBAhQDFAAAAAAAAAAhABDvAtENAAAADQAAABcAAAAAAAAAAAAAAO2BswAA"
+    "AHJvb3QvaW5uZXIvYmluL2NsYW5nLTIxUEsFBgAAAAAFAAUAMAEAAPUAAAAAAA=="};
+
 auto decode_base64(std::string_view encoded) -> std::vector<unsigned char> {
     auto decode_char = [](unsigned char ch) -> int {
         if (ch >= 'A' && ch <= 'Z')
@@ -204,6 +214,36 @@ void test_extract_zip_with_strip_components() {
     std::filesystem::remove_all(root);
 }
 
+void test_extract_zip_with_strip_components_preserves_symlink_names() {
+    auto root = unique_temp_dir("cppx-archive-zip-symlink");
+    auto archive_path = root / "sample.zip";
+    auto destination = root / "out";
+    write_fixture(archive_path, sample_zip_symlink_alias_base64);
+
+    auto result = cppx::archive::system::extract({
+        .archive_path = archive_path,
+        .destination_dir = destination,
+        .format = cppx::archive::ArchiveFormat::Zip,
+        .strip_components = 2,
+    });
+
+    tc.check(result.has_value(), "zip symlink alias extract succeeds");
+    if (result) {
+        auto link_path = destination / "bin" / "clang";
+        auto target_path = destination / "bin" / "clang-21";
+        std::error_code ec;
+        tc.check(std::filesystem::is_symlink(link_path, ec),
+                 "zip symlink alias name preserved");
+        tc.check(std::filesystem::read_symlink(link_path, ec) == "clang-21",
+                 "zip symlink alias target preserved");
+        tc.check(std::filesystem::is_regular_file(target_path, ec),
+                 "zip symlink alias target file preserved");
+        tc.check(read_text(target_path) == "clang binary\n",
+                 "zip symlink alias target contents preserved");
+    }
+    std::filesystem::remove_all(root);
+}
+
 void test_extract_tar_gz_preserves_symlinks() {
     auto root = unique_temp_dir("cppx-archive-symlink");
     auto archive_path = root / "sample.tar.gz";
@@ -257,6 +297,7 @@ int main() {
     test_extract_tar_gz_with_strip_components();
     test_extract_tar_xz_with_strip_components();
     test_extract_zip_with_strip_components();
+    test_extract_zip_with_strip_components_preserves_symlink_names();
     test_extract_tar_gz_preserves_symlinks();
     test_extract_rejects_negative_strip_components();
     return tc.summary("cppx.archive.system");
