@@ -23,6 +23,12 @@ enum class StatusKind {
     skip,
 };
 
+enum class DiagnosticSeverity {
+    info,
+    warning,
+    error,
+};
+
 enum class CapabilitySetting {
     auto_detect,
     always,
@@ -546,6 +552,13 @@ struct StatusLine {
     StatusKind status = StatusKind::run;
 };
 
+struct DiagnosticMessage {
+    DiagnosticSeverity severity = DiagnosticSeverity::info;
+    std::string message;
+    std::string context;
+    std::vector<std::string> hints;
+};
+
 std::string format_status_frame(std::span<StatusLine const> lines,
                                 bool color_enabled = false) {
     auto out = std::string{};
@@ -555,6 +568,64 @@ std::string format_status_frame(std::span<StatusLine const> lines,
         out += std::format("  {} {}",
                            status_cell(line.status, color_enabled),
                            key_value(line.label, line.value, 10).substr(2));
+    }
+    return out;
+}
+
+std::string_view diagnostic_label(DiagnosticSeverity severity) {
+    switch (severity) {
+    case DiagnosticSeverity::info:
+        return "info";
+    case DiagnosticSeverity::warning:
+        return "warning";
+    case DiagnosticSeverity::error:
+        return "error";
+    }
+    return "info";
+}
+
+StyleRole diagnostic_role(DiagnosticSeverity severity) {
+    switch (severity) {
+    case DiagnosticSeverity::info:
+        return StyleRole::accent;
+    case DiagnosticSeverity::warning:
+        return StyleRole::warning;
+    case DiagnosticSeverity::error:
+        return StyleRole::error;
+    }
+    return StyleRole::accent;
+}
+
+std::string diagnostic_line(DiagnosticSeverity severity,
+                            std::string_view message,
+                            bool color_enabled = false) {
+    auto label = std::format("{}:", diagnostic_label(severity));
+    return std::format("{} {}",
+                       style(label, diagnostic_role(severity), color_enabled),
+                       message);
+}
+
+std::string hint_line(std::string_view message, bool color_enabled = false) {
+    return std::format("{} {}",
+                       style("hint:", StyleRole::dim, color_enabled),
+                       message);
+}
+
+std::string format_diagnostic(DiagnosticMessage const& diagnostic,
+                              bool color_enabled = false) {
+    auto out = diagnostic.context.empty()
+        ? diagnostic_line(diagnostic.severity, diagnostic.message, color_enabled)
+        : diagnostic_line(
+              diagnostic.severity,
+              std::format("[{}] {}", diagnostic.context, diagnostic.message),
+              color_enabled);
+
+    for (auto const& hint : diagnostic.hints) {
+        if (hint.empty())
+            continue;
+        out.push_back('\n');
+        out += "  ";
+        out += hint_line(hint, color_enabled);
     }
     return out;
 }

@@ -192,6 +192,64 @@ void test_spawn_streams_captured_output() {
     tc.check(exited, "spawn emits exit event");
 }
 
+void test_process_event_collector() {
+    auto collector = cppx::process::ProcessEventCollector{};
+    collector.observe({
+        .kind = cppx::process::ProcessEventKind::stdout_chunk,
+        .text = "out",
+    });
+    collector.observe({
+        .kind = cppx::process::ProcessEventKind::stderr_chunk,
+        .text = "err",
+    });
+    collector.observe({
+        .kind = cppx::process::ProcessEventKind::exited,
+        .exit_code = 3,
+    });
+
+    auto const& summary = collector.summary();
+    tc.check_eq(summary.stdout_text, std::string{"out"},
+                "collector accumulates stdout");
+    tc.check_eq(summary.stderr_text, std::string{"err"},
+                "collector accumulates stderr");
+    tc.check(summary.exited && summary.exit_code == 3,
+             "collector records exit event");
+    auto result = summary.result();
+    tc.check(result && result->exit_code == 3 && !result->timed_out,
+             "collector exposes process result");
+}
+
+void test_stream_helper_drains_events() {
+    auto spec = cppx::process::ProcessStreamSpec{};
+#if defined(_WIN32)
+    spec.program = "cmd";
+    spec.args = {"/c", "(echo stream-helper-out)&(echo stream-helper-err 1>&2)&exit /b 6"};
+#else
+    spec.program = "sh";
+    spec.args = {"-c", "printf stream-helper-out; printf stream-helper-err >&2; exit 6"};
+#endif
+
+    auto event_count = std::size_t{0};
+    auto summary = cppx::process::system::stream(
+        std::move(spec),
+        [&](cppx::process::ProcessEvent const& event) {
+            ++event_count;
+            tc.check(!cppx::process::is_output(event.kind) || !event.text.empty(),
+                     "stream callback receives non-empty output events");
+        });
+
+    tc.check(summary.has_value(), "stream helper returns summary");
+    if (!summary)
+        return;
+
+    tc.check(event_count >= 3, "stream callback sees output and exit events");
+    tc.check_eq(summary->exit_code, 6, "stream helper preserves exit code");
+    tc.check(summary->stdout_text.contains("stream-helper-out"),
+             "stream helper collects stdout");
+    tc.check(summary->stderr_text.contains("stream-helper-err"),
+             "stream helper collects stderr");
+}
+
 #if !defined(_WIN32)
 void test_run_normalizes_signal_exit() {
     auto result = cppx::process::system::run({
@@ -213,6 +271,8 @@ int main() {
     test_capture_collects_stdout_stderr_and_exit_code();
     test_capture_timeout();
     test_spawn_streams_captured_output();
+    test_process_event_collector();
+    test_stream_helper_drains_events();
 #if !defined(_WIN32)
     test_run_normalizes_signal_exit();
 #endif

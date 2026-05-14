@@ -46,13 +46,13 @@ The library stays close to standard C++23: modules, `std::expected`,
 | `cppx.os` | OS-facing capability declarations such as `open_error`. |
 | `cppx.os.system` | System-backed OS helpers such as `open_url`. |
 | `cppx.process` | Process specs/results and `process_error` types for child-process work. |
-| `cppx.process.system` | System-backed `run`, `capture`, and `spawn` helpers with timeout/cwd/env override support. |
-| `cppx.cli` | Pure command parser, help renderer, subcommand aliases, repeatable flags, `--`, and closest-command suggestions. |
+| `cppx.process.system` | System-backed `run`, `capture`, `spawn`, event drain, and callback streaming helpers with timeout/cwd/env override support. |
+| `cppx.cli` | Pure command parser, help renderer, subcommand aliases, repeatable flags, `--`, closest-command suggestions, and completion-friendly metadata. |
 | `cppx.cli.config` | Source-agnostic config overlay for already-parsed defaults/user/project/profile/flag layers. |
 | `cppx.shell` | Explicit shell command builders and POSIX/PowerShell/cmd quoting helpers. |
 | `cppx.shell.system` | System-backed foreground shell execution plus background job registry helpers. |
 | `cppx.pty.system` | Pseudo-terminal spawn/read/write/resize helpers on POSIX and explicit unsupported reporting elsewhere. |
-| `cppx.terminal` | Pure terminal formatting and input primitives such as status cells, stages, key parsing, prompt composition, history, tail excerpts, and progress frames. |
+| `cppx.terminal` | Pure terminal formatting and input primitives such as status cells, stages, diagnostics, hints, key parsing, prompt composition, history, tail excerpts, and progress frames. |
 | `cppx.terminal.system` | System-backed terminal capability detection, `NO_COLOR`/TTY/CI handling, raw mode, Windows VT setup, and live progress rendering. |
 | `cppx.archive` | Archive extraction specs and error types. |
 | `cppx.archive.system` | System-backed archive extraction helpers. |
@@ -258,6 +258,85 @@ their own output modes and environment variable names, then pass those
 choices into `TerminalOptions`. The system layer follows the `NO_COLOR`
 convention, treats `TERM=dumb` and generic CI as non-interactive in auto
 mode, and uses Windows virtual terminal processing when it is available.
+
+Use the shared diagnostic and hint helpers when a tool wants consistent
+human-facing messages without handing over its reporting model:
+
+```cpp
+import cppx.terminal;
+import std;
+
+int main() {
+    auto message = cppx::terminal::format_diagnostic({
+        .severity = cppx::terminal::DiagnosticSeverity::error,
+        .message = "build step failed",
+        .context = "build",
+        .hints = {"rerun with --output wrapped to show full tool output"},
+    });
+
+    std::println("{}", message);
+}
+```
+
+### CLI metadata and completions
+
+```cpp
+import cppx.cli;
+import std;
+
+int main() {
+    auto root = cppx::cli::CommandSpec{
+        .name = "tool",
+        .subcommands = {{
+            .name = "build",
+            .summary = "Build a package",
+            .options = {{
+                .name = "profile",
+                .arity = cppx::cli::OptionArity::one,
+                .value_name = "name",
+                .description = "Build profile",
+                .value_hints = {"debug", "release"},
+            }},
+        }},
+    };
+
+    auto args = std::vector<std::string_view>{"build", "--profile"};
+    auto completions = cppx::cli::complete(root, args, "re");
+    for (auto const& candidate : completions.candidates)
+        std::println("{}", candidate.value);
+}
+```
+
+`cppx.cli` keeps command metadata as plain aggregate data. Consumers can
+render help, parse invocations, offer suggestions, and feed shell or
+editor completion adapters without adopting a policy-heavy framework.
+
+### Streaming process events
+
+```cpp
+import cppx.process.system;
+import std;
+
+int main() {
+    auto result = cppx::process::system::stream(
+        {
+            .program = "cmake",
+            .args = {"--build", "build"},
+        },
+        [](cppx::process::ProcessEvent const& event) {
+            if (event.kind == cppx::process::ProcessEventKind::stdout_chunk)
+                std::print("{}", event.text);
+        });
+
+    if (!result)
+        return 1;
+    return result->exit_code;
+}
+```
+
+`run`, `capture`, and `spawn` keep their existing behavior. `drain` and
+`stream` are opt-in conveniences for tools that want live output events
+and a final collected summary for build/test progress.
 
 ### CLI and shell core
 

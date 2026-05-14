@@ -28,6 +28,9 @@ struct OptionSpec {
     bool required = false;
     std::string value_name;
     std::string description;
+    std::string category;
+    std::vector<std::string> value_hints;
+    bool hidden = false;
 };
 
 struct CommandSpec {
@@ -38,6 +41,11 @@ struct CommandSpec {
     std::vector<OptionSpec> options;
     std::vector<CommandSpec> subcommands;
     bool allow_positionals = true;
+    std::string category;
+    std::string positional_name;
+    std::string positional_description;
+    std::vector<std::string> examples;
+    bool hidden = false;
 };
 
 struct Invocation {
@@ -71,6 +79,34 @@ struct ParseError {
     std::string message;
     std::string token;
     std::optional<std::string> suggestion;
+};
+
+enum class CompletionKind {
+    command,
+    option,
+    option_value,
+    positional,
+};
+
+struct CompletionCandidate {
+    CompletionKind kind = CompletionKind::command;
+    std::string value;
+    std::string description;
+    std::string value_name;
+    std::string category;
+    bool append_space = true;
+};
+
+struct CompletionContext {
+    std::vector<std::string> command_path;
+    bool after_terminator = false;
+    bool expects_option_value = false;
+    std::string option_name;
+};
+
+struct CompletionResult {
+    CompletionContext context;
+    std::vector<CompletionCandidate> candidates;
 };
 
 namespace detail {
@@ -141,6 +177,55 @@ inline std::string option_display(OptionSpec const& option) {
     return out;
 }
 
+inline bool starts_with(std::string_view value, std::string_view prefix) {
+    return prefix.empty() || value.starts_with(prefix);
+}
+
+inline void add_command_candidate(std::vector<CompletionCandidate>& out,
+                                  CommandSpec const& command,
+                                  std::string_view value,
+                                  std::string_view prefix) {
+    if (command.hidden || !starts_with(value, prefix))
+        return;
+    out.push_back({
+        .kind = CompletionKind::command,
+        .value = std::string{value},
+        .description = command.summary,
+        .category = command.category,
+    });
+}
+
+inline void add_option_candidate(std::vector<CompletionCandidate>& out,
+                                 OptionSpec const& option,
+                                 std::string_view value,
+                                 std::string_view prefix) {
+    if (option.hidden || !starts_with(value, prefix))
+        return;
+    out.push_back({
+        .kind = CompletionKind::option,
+        .value = std::string{value},
+        .description = option.description,
+        .value_name = option.value_name,
+        .category = option.category,
+        .append_space = option.arity == OptionArity::none,
+    });
+}
+
+inline void add_option_value_candidates(std::vector<CompletionCandidate>& out,
+                                        OptionSpec const& option,
+                                        std::string_view prefix) {
+    for (auto const& value : option.value_hints) {
+        if (!starts_with(value, prefix))
+            continue;
+        out.push_back({
+            .kind = CompletionKind::option_value,
+            .value = value,
+            .description = option.description,
+            .value_name = option.value_name,
+        });
+    }
+}
+
 inline void add_option(Invocation& invocation,
                        OptionSpec const& option,
                        std::string value) {
@@ -186,6 +271,161 @@ std::optional<std::string> suggest_command(CommandSpec const& spec,
     if (best_name && best_distance <= threshold)
         return best_name;
     return std::nullopt;
+}
+
+std::vector<std::string> command_names(CommandSpec const& spec,
+                                       bool include_aliases = false,
+                                       bool include_hidden = false) {
+    auto names = std::vector<std::string>{};
+    for (auto const& subcommand : spec.subcommands) {
+        if (subcommand.hidden && !include_hidden)
+            continue;
+        names.push_back(subcommand.name);
+        if (include_aliases)
+            names.insert(names.end(),
+                         subcommand.aliases.begin(),
+                         subcommand.aliases.end());
+    }
+    return names;
+}
+
+CompletionResult complete(CommandSpec const& root,
+                          std::span<std::string_view const> args,
+                          std::string_view prefix = {}) {
+    auto result = CompletionResult{};
+    result.context.command_path.push_back(root.name);
+
+    auto const* command = &root;
+    auto const* value_option = static_cast<OptionSpec const*>(nullptr);
+    auto after_options_started = false;
+
+    for (std::size_t index = 0; index < args.size(); ++index) {
+        auto token = args[index];
+
+        if (value_option != nullptr) {
+            value_option = nullptr;
+            continue;
+        }
+
+        if (result.context.after_terminator)
+            continue;
+
+        if (token == "--") {
+            result.context.after_terminator = true;
+            continue;
+        }
+
+        if (token.starts_with("--") && token.size() > 2) {
+            after_options_started = true;
+            auto body = token.substr(2);
+            auto eq = body.find('=');
+            auto name = eq == std::string_view::npos ? body : body.substr(0, eq);
+            auto const* option = detail::find_long_option(*command, name);
+            if (option != nullptr && option->arity == OptionArity::one &&
+                eq == std::string_view::npos) {
+                value_option = option;
+            }
+            continue;
+        }
+
+        if (token.starts_with('-') && token.size() > 1) {
+            after_options_started = true;
+            auto name = token.back();
+            auto const* option = detail::find_short_option(*command, name);
+            if (option != nullptr && option->arity == OptionArity::one &&
+                token.size() == 2) {
+                value_option = option;
+            }
+            continue;
+        }
+
+        if (!after_options_started) {
+            if (auto const* subcommand = detail::find_subcommand(*command, token)) {
+                command = subcommand;
+                result.context.command_path.push_back(command->name);
+                continue;
+            }
+        }
+    }
+
+    if (value_option != nullptr) {
+        result.context.expects_option_value = true;
+        result.context.option_name = value_option->name;
+        detail::add_option_value_candidates(result.candidates, *value_option, prefix);
+        return result;
+    }
+
+    if (result.context.after_terminator) {
+        if (command->allow_positionals && !command->positional_name.empty()) {
+            result.candidates.push_back({
+                .kind = CompletionKind::positional,
+                .value = command->positional_name,
+                .description = command->positional_description,
+                .append_space = false,
+            });
+        }
+        return result;
+    }
+
+    auto const wants_options = prefix.empty() || prefix.starts_with('-');
+    auto const wants_commands = prefix.empty() || !prefix.starts_with('-');
+
+    if (wants_commands && !after_options_started) {
+        for (auto const& subcommand : command->subcommands) {
+            detail::add_command_candidate(
+                result.candidates,
+                subcommand,
+                subcommand.name,
+                prefix);
+            for (auto const& alias : subcommand.aliases) {
+                detail::add_command_candidate(
+                    result.candidates,
+                    subcommand,
+                    alias,
+                    prefix);
+            }
+        }
+    }
+
+    if (wants_options) {
+        for (auto const& option : command->options) {
+            detail::add_option_candidate(
+                result.candidates,
+                option,
+                std::format("--{}", option.name),
+                prefix);
+            if (option.short_name != '\0') {
+                auto short_name = std::string{"-"};
+                short_name.push_back(option.short_name);
+                detail::add_option_candidate(
+                    result.candidates,
+                    option,
+                    short_name,
+                    prefix);
+            }
+        }
+    }
+
+    if (result.candidates.empty() && command->allow_positionals &&
+        !command->positional_name.empty() && !prefix.starts_with('-')) {
+        result.candidates.push_back({
+            .kind = CompletionKind::positional,
+            .value = command->positional_name,
+            .description = command->positional_description,
+            .append_space = false,
+        });
+    }
+
+    return result;
+}
+
+CompletionResult complete(CommandSpec const& root,
+                          std::vector<std::string_view> const& args,
+                          std::string_view prefix = {}) {
+    return complete(
+        root,
+        std::span<std::string_view const>{args.data(), args.size()},
+        prefix);
 }
 
 std::expected<Invocation, ParseError>
@@ -355,9 +595,14 @@ std::string render_help(CommandSpec const& spec,
     if (!spec.subcommands.empty()) {
         out += "\nCommands:\n";
         auto width = std::size_t{0};
-        for (auto const& subcommand : spec.subcommands)
-            width = std::max(width, subcommand.name.size());
         for (auto const& subcommand : spec.subcommands) {
+            if (subcommand.hidden)
+                continue;
+            width = std::max(width, subcommand.name.size());
+        }
+        for (auto const& subcommand : spec.subcommands) {
+            if (subcommand.hidden)
+                continue;
             out += std::format("  {:<{}}  {}\n",
                                subcommand.name,
                                width,
@@ -370,16 +615,27 @@ std::string render_help(CommandSpec const& spec,
         auto displays = std::vector<std::string>{};
         auto width = std::size_t{0};
         for (auto const& option : spec.options) {
+            if (option.hidden)
+                continue;
             auto display = detail::option_display(option);
             width = std::max(width, display.size());
             displays.push_back(std::move(display));
         }
-        for (std::size_t i = 0; i < spec.options.size(); ++i) {
+        auto display_index = std::size_t{0};
+        for (auto const& option : spec.options) {
+            if (option.hidden)
+                continue;
             out += std::format("  {:<{}}  {}\n",
-                               displays[i],
+                               displays[display_index++],
                                width,
-                               spec.options[i].description);
+                               option.description);
         }
+    }
+
+    if (!spec.examples.empty()) {
+        out += "\nExamples:\n";
+        for (auto const& example : spec.examples)
+            out += std::format("  {}\n", example);
     }
 
     return out;
