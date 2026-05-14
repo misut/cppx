@@ -781,6 +781,14 @@ private:
 auto spawn(cppx::process::ProcessStreamSpec spec)
     -> std::expected<ChildProcess, cppx::process::process_error>;
 
+cppx::process::ProcessEventSummary
+drain(ChildProcess& child,
+      std::function<void(cppx::process::ProcessEvent const&)> on_event = {});
+
+std::expected<cppx::process::ProcessEventSummary, cppx::process::process_error>
+stream(cppx::process::ProcessStreamSpec spec,
+       std::function<void(cppx::process::ProcessEvent const&)> on_event = {});
+
 inline auto run(cppx::process::ProcessSpec const& spec)
     -> std::expected<cppx::process::ProcessResult, cppx::process::process_error> {
     if (spec.program.empty())
@@ -1257,6 +1265,33 @@ auto spawn(cppx::process::ProcessStreamSpec spec)
 
     return ChildProcess{std::move(state)};
 #endif
+}
+
+cppx::process::ProcessEventSummary
+drain(ChildProcess& child,
+      std::function<void(cppx::process::ProcessEvent const&)> on_event) {
+    auto collector = cppx::process::ProcessEventCollector{};
+    while (auto event = child.wait_event()) {
+        collector.observe(*event);
+        if (on_event)
+            on_event(*event);
+        if (cppx::process::is_terminal(event->kind))
+            break;
+    }
+    return collector.summary();
+}
+
+std::expected<cppx::process::ProcessEventSummary, cppx::process::process_error>
+stream(cppx::process::ProcessStreamSpec spec,
+       std::function<void(cppx::process::ProcessEvent const&)> on_event) {
+    auto child = spawn(std::move(spec));
+    if (!child)
+        return std::unexpected{child.error()};
+
+    auto summary = drain(*child, std::move(on_event));
+    if (summary.error)
+        return std::unexpected{*summary.error};
+    return summary;
 }
 
 } // namespace cppx::process::system

@@ -186,6 +186,30 @@ void test_status_frame() {
     tc.check(frame.contains("fake"), "status frame includes value");
 }
 
+void test_diagnostic_formatting() {
+    auto line = cppx::terminal::diagnostic_line(
+        cppx::terminal::DiagnosticSeverity::warning,
+        "cache is stale",
+        false);
+    tc.check_eq(line, std::string{"warning: cache is stale"},
+                "diagnostic line includes severity label");
+
+    auto hint = cppx::terminal::hint_line("rerun with --output wrapped", false);
+    tc.check_eq(hint, std::string{"hint: rerun with --output wrapped"},
+                "hint line uses shared prefix");
+
+    auto diagnostic = cppx::terminal::format_diagnostic({
+        .severity = cppx::terminal::DiagnosticSeverity::error,
+        .message = "build failed",
+        .context = "build",
+        .hints = {"rerun with --output wrapped"},
+    }, false);
+    tc.check_eq(diagnostic,
+                std::string{"error: [build] build failed\n"
+                            "  hint: rerun with --output wrapped"},
+                "diagnostic formatter appends hints");
+}
+
 int main() {
     test_capability_settings();
     test_style_disabled();
@@ -199,5 +223,6 @@ int main() {
     test_key_event_parser_and_prompt_composer();
     test_history_and_input_classification();
     test_status_frame();
+    test_diagnostic_formatting();
     return tc.summary("cppx.terminal");
 }
