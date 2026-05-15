@@ -246,10 +246,16 @@ int main() {
     auto caps = cppx::terminal::system::stdout_capabilities(options);
 
     std::println("{}",
+                 cppx::terminal::section_header(
+                     "build",
+                     color,
+                     caps.unicode_enabled));
+    std::println("{}",
                  cppx::terminal::stage("build", 1, 3, "app", color));
     std::println("{}",
-                 cppx::terminal::status_badge(
+                 cppx::terminal::summary_line(
                      cppx::terminal::StatusKind::ok,
+                     "artifact ready",
                      color,
                      caps.unicode_enabled));
 }
@@ -261,7 +267,8 @@ choices into `TerminalOptions`. The system layer follows the `NO_COLOR`
 and `FORCE_COLOR` conventions, treats `TERM=dumb` and generic CI as
 non-interactive for live progress in auto mode, exposes a capability
 snapshot for human renderers, and uses Windows virtual terminal processing
-when it is available.
+when it is available. `section_header` and `summary_line` provide small
+visual accents for human output while preserving plain ASCII fallbacks.
 
 Use `ProgressRenderOptions` for richer TTY frames while keeping an ASCII
 fallback for logs and tests:
