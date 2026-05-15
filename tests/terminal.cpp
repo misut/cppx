@@ -51,12 +51,33 @@ void test_status_badge() {
                  false,
                  true) == "\u00d7 FAIL",
              "status badge has unicode symbol and label");
+    tc.check(cppx::terminal::summary_line(
+                 cppx::terminal::StatusKind::ok,
+                 "toolchain ready",
+                 false,
+                 false) == "  + OK  toolchain ready",
+             "summary line combines badge and message");
+    tc.check(cppx::terminal::summary_line(
+                 cppx::terminal::StatusKind::fail,
+                 "needs attention",
+                 false,
+                 true) == "  \u00d7 FAIL  needs attention",
+             "summary line supports unicode badge");
 }
 
 void test_key_value() {
     tc.check(cppx::terminal::key_value("target", "native") ==
                  "  target     native",
              "key value uses stable label column");
+}
+
+void test_section_header() {
+    tc.check(cppx::terminal::section_header("terminal", false, false) ==
+                 ":: terminal",
+             "section header uses ascii accent");
+    tc.check(cppx::terminal::section_header("terminal", false, true) ==
+                 "\u25c6 terminal",
+             "section header uses unicode accent");
 }
 
 void test_stage() {
@@ -144,6 +165,19 @@ void test_visual_progress_frame() {
     });
     tc.check(unicode.contains("\u280b"), "unicode progress frame uses braille spinner");
     tc.check(unicode.contains("\u2591"), "unicode progress frame uses shaded bar");
+
+    auto colored = cppx::terminal::format_progress_frame({
+        .done = 12,
+        .total = 56,
+        .percent = 21,
+        .label = "build",
+    }, 0, cppx::terminal::ProgressRenderOptions{
+        .color_enabled = true,
+        .show_bar = true,
+        .bar_width = 10,
+    });
+    tc.check(colored.contains("\x1b[32m==\x1b[0m\x1b[2m--------\x1b[0m"),
+             "colored visual progress frame styles filled and remaining bar");
 }
 
 std::string active_char(char ch) {
@@ -279,6 +313,7 @@ int main() {
     test_status_cell_width();
     test_status_badge();
     test_key_value();
+    test_section_header();
     test_stage();
     test_tail_excerpt();
     test_progress_frame();

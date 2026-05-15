@@ -202,6 +202,14 @@ std::string status_badge(StatusKind status, bool color_enabled = false,
     return style(badge, status_role(status), color_enabled);
 }
 
+std::string summary_line(StatusKind status, std::string_view message,
+                         bool color_enabled = false,
+                         bool unicode_enabled = false) {
+    return std::format("  {}  {}", status_badge(status, color_enabled,
+                                                unicode_enabled),
+                       message);
+}
+
 std::string key_value(std::string_view key, std::string_view value,
                       std::size_t width = 10) {
     return std::format("  {:<{}} {}", key, width, value);
@@ -221,6 +229,20 @@ std::string stage(std::string_view name, int index, int total,
 
 std::string section(std::string_view title, bool color_enabled = false) {
     return style(title, StyleRole::bold, color_enabled);
+}
+
+std::string_view section_symbol(bool unicode_enabled) {
+    return unicode_enabled ? "\u25c6" : "::";
+}
+
+std::string section_header(std::string_view title,
+                           bool color_enabled = false,
+                           bool unicode_enabled = false) {
+    if (!color_enabled)
+        return std::format("{} {}", section_symbol(unicode_enabled), title);
+    return std::format("{} {}",
+                       style(section_symbol(unicode_enabled), StyleRole::accent, true),
+                       style(title, StyleRole::bold, true));
 }
 
 std::string tail_excerpt(std::string_view text, std::size_t max_chars = 2000) {
@@ -331,7 +353,8 @@ std::string_view spinner_frame(std::size_t frame_index, bool unicode_enabled) {
 }
 
 std::string progress_bar(int percent, std::size_t width,
-                         bool unicode_enabled) {
+                         bool unicode_enabled,
+                         bool color_enabled = false) {
     if (width == 0)
         return {};
     auto clamped = std::clamp(percent, 0, 100);
@@ -339,16 +362,28 @@ std::string progress_bar(int percent, std::size_t width,
         (static_cast<std::int64_t>(clamped) * static_cast<std::int64_t>(width)) /
         100);
     auto out = std::string{};
+    auto filled_text = std::string{};
+    auto rest_text = std::string{};
     if (unicode_enabled) {
         for (std::size_t i = 0; i < filled; ++i)
-            out += "\u2588";
+            filled_text += "\u2588";
         for (std::size_t i = filled; i < width; ++i)
-            out += "\u2591";
+            rest_text += "\u2591";
+    } else {
+        filled_text.append(filled, '=');
+        rest_text.append(width - filled, '-');
+    }
+
+    if (color_enabled) {
+        if (!filled_text.empty())
+            out += style(filled_text, StyleRole::success, true);
+        if (!rest_text.empty())
+            out += style(rest_text, StyleRole::dim, true);
         return out;
     }
 
-    out.append(filled, '=');
-    out.append(width - filled, '-');
+    out += filled_text;
+    out += rest_text;
     return out;
 }
 
@@ -359,7 +394,8 @@ std::string progress_measure(ProgressSnapshot const& snapshot,
     if (options.show_bar && options.bar_width > 0) {
         return std::format("[{}] {}% [{}/{}]",
                            progress_bar(snapshot.percent, options.bar_width,
-                                        options.unicode_enabled),
+                                        options.unicode_enabled,
+                                        options.color_enabled),
                            snapshot.percent, snapshot.done, snapshot.total);
     }
     return std::format("[{}/{} {}%]", snapshot.done, snapshot.total,
