@@ -95,6 +95,21 @@ void test_no_color_requested() {
              "NO_COLOR non-empty disables auto color");
 }
 
+void test_force_color_requested() {
+    auto restore = scoped_env_var{"FORCE_COLOR"};
+    clear_env_var("FORCE_COLOR");
+    tc.check(!cppx::terminal::system::force_color_requested(),
+             "FORCE_COLOR missing does not force color");
+
+    set_env_var("FORCE_COLOR", "0");
+    tc.check(!cppx::terminal::system::force_color_requested(),
+             "FORCE_COLOR=0 does not force color");
+
+    set_env_var("FORCE_COLOR", "1");
+    tc.check(cppx::terminal::system::force_color_requested(),
+             "FORCE_COLOR non-empty and non-zero forces color");
+}
+
 void test_explicit_color_always() {
     auto options = cppx::terminal::TerminalOptions{
         .color = cppx::terminal::CapabilitySetting::always,
@@ -103,6 +118,20 @@ void test_explicit_color_always() {
              "explicit color always enables stdout color");
     tc.check(cppx::terminal::system::stderr_color_enabled(options),
              "explicit color always enables stderr color");
+}
+
+void test_force_color_auto_mode() {
+    auto no_color = scoped_env_var{"NO_COLOR"};
+    auto force_color = scoped_env_var{"FORCE_COLOR"};
+    clear_env_var("NO_COLOR");
+    set_env_var("FORCE_COLOR", "1");
+
+    tc.check(cppx::terminal::system::stdout_color_enabled({}),
+             "FORCE_COLOR enables stdout color in auto mode");
+
+    set_env_var("NO_COLOR", "1");
+    tc.check(!cppx::terminal::system::stdout_color_enabled({}),
+             "NO_COLOR still wins over FORCE_COLOR in auto mode");
 }
 
 void test_progress_allowed_flag() {
@@ -114,11 +143,24 @@ void test_progress_allowed_flag() {
              "progress_allowed=false disables progress before terminal checks");
 }
 
+void test_stdout_capabilities_shape() {
+    auto capabilities = cppx::terminal::system::stdout_capabilities({});
+    tc.check(capabilities.is_terminal ==
+                 cppx::terminal::system::stdout_is_terminal(),
+             "stdout capabilities report terminal detection");
+    tc.check(capabilities.color_enabled ==
+                 cppx::terminal::system::stdout_color_enabled({}),
+             "stdout capabilities report color detection");
+}
+
 int main() {
     test_env_capability_setting();
     test_resolve_capability_precedence();
     test_no_color_requested();
+    test_force_color_requested();
     test_explicit_color_always();
+    test_force_color_auto_mode();
     test_progress_allowed_flag();
+    test_stdout_capabilities_shape();
     return tc.summary("cppx.terminal.system");
 }

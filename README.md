@@ -243,21 +243,49 @@ int main() {
         .progress_env = "MYTOOL_PROGRESS",
     };
     auto color = cppx::terminal::system::stdout_color_enabled(options);
+    auto caps = cppx::terminal::system::stdout_capabilities(options);
 
     std::println("{}",
                  cppx::terminal::stage("build", 1, 3, "app", color));
     std::println("{}",
-                 cppx::terminal::status_cell(
+                 cppx::terminal::status_badge(
                      cppx::terminal::StatusKind::ok,
-                     color));
+                     color,
+                     caps.unicode_enabled));
 }
 ```
 
 `cppx.terminal` is pure and does not prescribe CLI policy. Tools keep
 their own output modes and environment variable names, then pass those
 choices into `TerminalOptions`. The system layer follows the `NO_COLOR`
-convention, treats `TERM=dumb` and generic CI as non-interactive in auto
-mode, and uses Windows virtual terminal processing when it is available.
+and `FORCE_COLOR` conventions, treats `TERM=dumb` and generic CI as
+non-interactive for live progress in auto mode, exposes a capability
+snapshot for human renderers, and uses Windows virtual terminal processing
+when it is available.
+
+Use `ProgressRenderOptions` for richer TTY frames while keeping an ASCII
+fallback for logs and tests:
+
+```cpp
+auto frame = cppx::terminal::format_progress_frame(
+    {.done = 12, .total = 56, .percent = 21, .label = "build"},
+    0,
+    {.color_enabled = color, .unicode_enabled = caps.unicode_enabled, .show_bar = true});
+```
+
+GitHub Actions log commands are formatted by pure helpers so tools can emit
+CI annotations and collapsible groups without duplicating escaping rules:
+
+```cpp
+std::println("{}", cppx::terminal::github_actions_group_start("compiler output"));
+std::println("{}", cppx::terminal::github_actions_group_end());
+std::println("{}", cppx::terminal::github_actions_annotation({
+    .severity = cppx::terminal::DiagnosticSeverity::error,
+    .message = "build failed",
+    .file = "src/app.cppm",
+    .line = 42,
+}));
+```
 
 Use the shared diagnostic and hint helpers when a tool wants consistent
 human-facing messages without handing over its reporting model:

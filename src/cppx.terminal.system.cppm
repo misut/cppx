@@ -32,6 +32,7 @@ enum class LiveProgressRenderMode {
 };
 
 bool no_color_requested();
+bool force_color_requested();
 bool env_is_set(std::string_view name);
 bool term_is_dumb();
 bool github_actions();
@@ -55,6 +56,22 @@ struct TerminalSize {
     std::size_t columns = 0;
     std::size_t rows = 0;
 };
+
+struct TerminalCapabilities {
+    bool is_terminal = false;
+    bool is_ci = false;
+    bool is_github_actions = false;
+    bool color_enabled = false;
+    bool progress_enabled = false;
+    bool unicode_enabled = false;
+    bool hyperlinks_enabled = false;
+    TerminalSize size;
+};
+
+TerminalCapabilities
+stdout_capabilities(cppx::terminal::TerminalOptions const& options = {});
+TerminalCapabilities
+stderr_capabilities(cppx::terminal::TerminalOptions const& options = {});
 
 class RawMode {
 public:
@@ -144,6 +161,12 @@ bool no_color_requested() {
     return value != nullptr && value[0] != '\0';
 }
 
+bool force_color_requested() {
+    auto const* value = std::getenv("FORCE_COLOR");
+    return value != nullptr && value[0] != '\0' &&
+           std::string_view{value} != "0";
+}
+
 bool env_is_set(std::string_view name) {
     auto key = std::string{name};
     auto const* value = std::getenv(key.c_str());
@@ -193,7 +216,11 @@ bool color_enabled_for(bool is_terminal,
         return true;
     if (resolved == cppx::terminal::CapabilitySetting::never)
         return false;
-    return is_terminal && !no_color_requested() && !term_is_dumb();
+    if (no_color_requested())
+        return false;
+    if (force_color_requested())
+        return true;
+    return is_terminal && !term_is_dumb();
 }
 
 bool stdout_color_enabled(cppx::terminal::TerminalOptions const& options) {
@@ -216,8 +243,7 @@ bool stdout_progress_enabled(cppx::terminal::TerminalOptions const& options) {
     if (setting == cppx::terminal::CapabilitySetting::never)
         return false;
 
-    return stdout_is_terminal() && !generic_ci() && !no_color_requested() &&
-           !term_is_dumb();
+    return stdout_is_terminal() && !generic_ci() && !term_is_dumb();
 }
 
 bool stdout_hyperlinks_enabled(cppx::terminal::TerminalOptions const& options) {
@@ -236,6 +262,34 @@ bool stdout_unicode_enabled(cppx::terminal::TerminalOptions const& options) {
     if (setting == cppx::terminal::CapabilitySetting::never)
         return false;
     return stdout_is_terminal() && !term_is_dumb();
+}
+
+TerminalCapabilities
+stdout_capabilities(cppx::terminal::TerminalOptions const& options) {
+    return {
+        .is_terminal = stdout_is_terminal(),
+        .is_ci = generic_ci(),
+        .is_github_actions = github_actions(),
+        .color_enabled = stdout_color_enabled(options),
+        .progress_enabled = stdout_progress_enabled(options),
+        .unicode_enabled = stdout_unicode_enabled(options),
+        .hyperlinks_enabled = stdout_hyperlinks_enabled(options),
+        .size = terminal_size(),
+    };
+}
+
+TerminalCapabilities
+stderr_capabilities(cppx::terminal::TerminalOptions const& options) {
+    return {
+        .is_terminal = stderr_is_terminal(),
+        .is_ci = generic_ci(),
+        .is_github_actions = github_actions(),
+        .color_enabled = stderr_color_enabled(options),
+        .progress_enabled = false,
+        .unicode_enabled = stdout_unicode_enabled(options),
+        .hyperlinks_enabled = stdout_hyperlinks_enabled(options),
+        .size = terminal_size(),
+    };
 }
 
 #if defined(_WIN32)
@@ -604,7 +658,11 @@ void LiveProgressRenderer::render_once() {
     auto text = cppx::terminal::format_progress_frame(
         *progress,
         spinner_index_++,
-        stdout_color_enabled(options_));
+        cppx::terminal::ProgressRenderOptions{
+            .color_enabled = stdout_color_enabled(options_),
+            .unicode_enabled = stdout_unicode_enabled(options_),
+            .show_bar = true,
+        });
     text = progress_detail::fit_to_terminal_width(std::move(text));
     auto const line_count = progress_detail::rendered_line_count(text);
     if (mode_ == LiveProgressRenderMode::vt) {
