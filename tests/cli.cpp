@@ -123,6 +123,67 @@ void test_completion_candidates_for_option_values() {
              "option value completion candidate kind");
 }
 
+void test_metadata_json_helpers() {
+    auto catalog = cppx::cli::command_catalog_json(root_spec());
+    tc.check(catalog.contains("\"name\":\"exec\""),
+             "command catalog json includes command name");
+    tc.check(catalog.contains("\"aliases\":[\"run\"]"),
+             "command catalog json includes aliases");
+    tc.check(catalog.contains("\"name\":\"model\""),
+             "command catalog json includes option name");
+    tc.check(catalog.contains("\"arity\":\"one\""),
+             "command catalog json includes option arity");
+    tc.check(catalog.contains("\"value_hints\":[\"haiku\",\"sonnet\"]"),
+             "command catalog json includes value hints");
+
+    auto escaped = cppx::cli::json_string("a\"b\\c\n");
+    tc.check_eq(escaped, std::string{"\"a\\\"b\\\\c\\n\""},
+                "json string escapes special characters");
+}
+
+void test_completion_json_helpers() {
+    auto args = std::vector<std::string_view>{"exec", "--model"};
+    auto values = cppx::cli::complete(root_spec(), args, "so");
+    auto json = cppx::cli::completion_result_json(values);
+    tc.check(json.contains("\"expects_option_value\":true"),
+             "completion json includes context flag");
+    tc.check(json.contains("\"option_name\":\"model\""),
+             "completion json includes option name");
+    tc.check(json.contains("\"kind\":\"option_value\""),
+             "completion json includes candidate kind");
+    tc.check(json.contains("\"value\":\"sonnet\""),
+             "completion json includes candidate value");
+}
+
+void test_completion_shell_scripts() {
+    tc.check(cppx::cli::parse_completion_shell("bash") ==
+                 std::optional{cppx::cli::CompletionShell::bash},
+             "parse bash completion shell");
+    tc.check(!cppx::cli::parse_completion_shell("powershell"),
+             "reject unsupported completion shell");
+
+    auto bash = cppx::cli::completion_script(root_spec(),
+                                             cppx::cli::CompletionShell::bash);
+    tc.check(bash.contains("# bash completion for agent"),
+             "bash script includes header");
+    tc.check(bash.contains("_agent_complete()"),
+             "bash script includes function name");
+    tc.check(bash.contains("agent complete --output raw"),
+             "bash script calls raw completion command");
+
+    auto zsh = cppx::cli::completion_script("agent",
+                                            cppx::cli::CompletionShell::zsh);
+    tc.check(zsh.contains("#compdef agent"), "zsh script includes compdef");
+    tc.check(zsh.contains("_agent \"$@\""), "zsh script invokes function");
+
+    auto fish = cppx::cli::completion_script("agent-tool",
+                                             cppx::cli::CompletionShell::fish);
+    tc.check(fish.contains("function __agent_tool_complete"),
+             "fish script sanitizes function name");
+    tc.check(fish.contains("complete -c agent-tool"),
+             "fish script targets command name");
+}
+
 int main() {
     test_subcommand_alias_options_and_terminator();
     test_unknown_command_suggestion();
@@ -130,5 +191,8 @@ int main() {
     test_help_renders_commands_and_options();
     test_completion_candidates_for_commands_and_options();
     test_completion_candidates_for_option_values();
+    test_metadata_json_helpers();
+    test_completion_json_helpers();
+    test_completion_shell_scripts();
     return tc.summary("cppx.cli");
 }
