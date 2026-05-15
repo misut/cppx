@@ -14,3 +14,18 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+
+  notify:
+    needs: [release]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        repo: [exon, intron]
+    steps:
+      - name: Dispatch cppx bump to ${{ matrix.repo }}
+        run: |
+          gh api repos/misut/${{ matrix.repo }}/dispatches \
+            -f event_type=bump-cppx \
+            -f "client_payload[version]=${GITHUB_REF_NAME#v}"
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
