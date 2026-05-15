@@ -304,12 +304,19 @@ int main() {
     auto completions = cppx::cli::complete(root, args, "re");
     for (auto const& candidate : completions.candidates)
         std::println("{}", candidate.value);
+
+    std::println("{}", cppx::cli::command_catalog_json(root));
+    std::println("{}",
+                 cppx::cli::completion_script(
+                     root,
+                     cppx::cli::CompletionShell::bash));
 }
 ```
 
 `cppx.cli` keeps command metadata as plain aggregate data. Consumers can
-render help, parse invocations, offer suggestions, and feed shell or
-editor completion adapters without adopting a policy-heavy framework.
+render help, parse invocations, offer suggestions, emit command and
+completion JSON, and generate bash/zsh/fish completion adapters without
+adopting a policy-heavy framework.
 
 ### Streaming process events
 

@@ -88,6 +88,12 @@ enum class CompletionKind {
     positional,
 };
 
+enum class CompletionShell {
+    bash,
+    zsh,
+    fish,
+};
+
 struct CompletionCandidate {
     CompletionKind kind = CompletionKind::command;
     std::string value;
@@ -179,6 +185,21 @@ inline std::string option_display(OptionSpec const& option) {
 
 inline bool starts_with(std::string_view value, std::string_view prefix) {
     return prefix.empty() || value.starts_with(prefix);
+}
+
+inline std::string shell_function_name(std::string_view command_name) {
+    auto out = std::string{};
+    out.reserve(command_name.size());
+    for (auto ch : command_name) {
+        auto const byte = static_cast<unsigned char>(ch);
+        if (std::isalnum(byte) || ch == '_')
+            out.push_back(ch);
+        else
+            out.push_back('_');
+    }
+    if (out.empty())
+        out = "tool";
+    return out;
 }
 
 inline void add_command_candidate(std::vector<CompletionCandidate>& out,
@@ -287,6 +308,259 @@ std::vector<std::string> command_names(CommandSpec const& spec,
                          subcommand.aliases.end());
     }
     return names;
+}
+
+std::string_view option_arity_name(OptionArity arity) {
+    switch (arity) {
+    case OptionArity::none:
+        return "none";
+    case OptionArity::one:
+        return "one";
+    }
+    return "none";
+}
+
+std::string_view completion_kind_name(CompletionKind kind) {
+    switch (kind) {
+    case CompletionKind::command:
+        return "command";
+    case CompletionKind::option:
+        return "option";
+    case CompletionKind::option_value:
+        return "option_value";
+    case CompletionKind::positional:
+        return "positional";
+    }
+    return "command";
+}
+
+std::string_view completion_shell_name(CompletionShell shell) {
+    switch (shell) {
+    case CompletionShell::bash:
+        return "bash";
+    case CompletionShell::zsh:
+        return "zsh";
+    case CompletionShell::fish:
+        return "fish";
+    }
+    return "bash";
+}
+
+std::optional<CompletionShell> parse_completion_shell(std::string_view value) {
+    if (value == "bash")
+        return CompletionShell::bash;
+    if (value == "zsh")
+        return CompletionShell::zsh;
+    if (value == "fish")
+        return CompletionShell::fish;
+    return std::nullopt;
+}
+
+std::string json_escape(std::string_view text) {
+    auto out = std::string{};
+    out.reserve(text.size());
+    for (auto ch : text) {
+        switch (ch) {
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            if (static_cast<unsigned char>(ch) < 0x20) {
+                out += std::format("\\u{:04x}", static_cast<unsigned char>(ch));
+            } else {
+                out.push_back(ch);
+            }
+            break;
+        }
+    }
+    return out;
+}
+
+std::string json_string(std::string_view text) {
+    return std::format("\"{}\"", json_escape(text));
+}
+
+std::string json_string_array(std::span<std::string const> values) {
+    auto out = std::string{"["};
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0)
+            out += ",";
+        out += json_string(values[i]);
+    }
+    out += "]";
+    return out;
+}
+
+std::string option_metadata_json(OptionSpec const& option) {
+    auto out = std::format(
+        "{{\"name\":{},\"arity\":{},\"repeatable\":{},\"required\":{}",
+        json_string(option.name),
+        json_string(option_arity_name(option.arity)),
+        option.repeatable ? "true" : "false",
+        option.required ? "true" : "false");
+    if (option.short_name != '\0') {
+        out += std::format(",\"short_name\":{}",
+                           json_string(std::string{option.short_name}));
+    } else {
+        out += ",\"short_name\":null";
+    }
+    out += std::format(
+        ",\"value_name\":{},\"description\":{},\"category\":{},\"value_hints\":{},\"hidden\":{}}}",
+        json_string(option.value_name),
+        json_string(option.description),
+        json_string(option.category),
+        json_string_array(option.value_hints),
+        option.hidden ? "true" : "false");
+    return out;
+}
+
+std::string option_metadata_array_json(std::span<OptionSpec const> options) {
+    auto out = std::string{"["};
+    for (std::size_t i = 0; i < options.size(); ++i) {
+        if (i > 0)
+            out += ",";
+        out += option_metadata_json(options[i]);
+    }
+    out += "]";
+    return out;
+}
+
+std::string command_metadata_json(CommandSpec const& command) {
+    return std::format(
+        "{{\"name\":{},\"aliases\":{},\"summary\":{},\"description\":{},"
+        "\"category\":{},\"positional_name\":{},\"positional_description\":{},"
+        "\"allow_positionals\":{},\"hidden\":{},\"examples\":{},\"options\":{}}}",
+        json_string(command.name),
+        json_string_array(command.aliases),
+        json_string(command.summary),
+        json_string(command.description),
+        json_string(command.category),
+        json_string(command.positional_name),
+        json_string(command.positional_description),
+        command.allow_positionals ? "true" : "false",
+        command.hidden ? "true" : "false",
+        json_string_array(command.examples),
+        option_metadata_array_json(command.options));
+}
+
+std::string command_catalog_json(CommandSpec const& root,
+                                 bool include_hidden = false) {
+    auto out = std::string{"["};
+    auto first = true;
+    for (auto const& command : root.subcommands) {
+        if (command.hidden && !include_hidden)
+            continue;
+        if (!first)
+            out += ",";
+        first = false;
+        out += command_metadata_json(command);
+    }
+    out += "]";
+    return out;
+}
+
+std::string completion_context_json(CompletionContext const& context) {
+    return std::format(
+        "{{\"command_path\":{},\"after_terminator\":{},\"expects_option_value\":{},\"option_name\":{}}}",
+        json_string_array(context.command_path),
+        context.after_terminator ? "true" : "false",
+        context.expects_option_value ? "true" : "false",
+        json_string(context.option_name));
+}
+
+std::string completion_candidate_json(CompletionCandidate const& candidate) {
+    return std::format(
+        "{{\"kind\":{},\"value\":{},\"description\":{},\"value_name\":{},"
+        "\"category\":{},\"append_space\":{}}}",
+        json_string(completion_kind_name(candidate.kind)),
+        json_string(candidate.value),
+        json_string(candidate.description),
+        json_string(candidate.value_name),
+        json_string(candidate.category),
+        candidate.append_space ? "true" : "false");
+}
+
+std::string
+completion_candidates_json(std::span<CompletionCandidate const> candidates) {
+    auto out = std::string{"["};
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        if (i > 0)
+            out += ",";
+        out += completion_candidate_json(candidates[i]);
+    }
+    out += "]";
+    return out;
+}
+
+std::string completion_result_json(CompletionResult const& result) {
+    return std::format(
+        "{{\"context\":{},\"candidates\":{}}}",
+        completion_context_json(result.context),
+        completion_candidates_json(result.candidates));
+}
+
+std::string completion_script(std::string_view command_name,
+                              CompletionShell shell) {
+    auto command = std::string{command_name};
+    auto function_name = detail::shell_function_name(command_name);
+    switch (shell) {
+    case CompletionShell::bash:
+        return "# bash completion for " + command + "\n_" + function_name +
+               "_complete()\n{\n"
+               "    local -a candidates\n"
+               "    mapfile -t candidates < <(" +
+               command +
+               " complete --output raw -- \"${COMP_WORDS[@]:1}\")\n"
+               "    COMPREPLY=(\"${candidates[@]}\")\n"
+               "}\n\n"
+               "complete -F _" +
+               function_name + "_complete " + command + "\n";
+    case CompletionShell::zsh:
+        return "#compdef " + command + "\n_" + function_name +
+               "()\n{\n"
+               "    local -a candidates\n"
+               "    candidates=(\"${(@f)$(" +
+               command +
+               " complete --output raw -- ${words[@]:2})}\")\n"
+               "    compadd -a candidates\n"
+               "}\n\n"
+               "_" +
+               function_name + " \"$@\"\n";
+    case CompletionShell::fish:
+        return "function __" + function_name +
+               "_complete\n"
+               "    set -l tokens (commandline -opc)\n"
+               "    set -e tokens[1]\n"
+               "    set -l current (commandline -ct)\n"
+               "    if test (count $tokens) -gt 0\n"
+               "        set tokens[-1] $current\n"
+               "    else\n"
+               "        set tokens $current\n"
+               "    end\n"
+               "    " +
+               command +
+               " complete --output raw -- $tokens\n"
+               "end\n\n"
+               "complete -c " +
+               command + " -f -a '(__" + function_name + "_complete)'\n";
+    }
+    return {};
+}
+
+std::string completion_script(CommandSpec const& root, CompletionShell shell) {
+    return completion_script(root.name, shell);
 }
 
 CompletionResult complete(CommandSpec const& root,
