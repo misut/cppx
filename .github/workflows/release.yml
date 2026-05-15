@@ -28,4 +28,4 @@ jobs:
             -f event_type=bump-cppx \
             -f "client_payload[version]=${GITHUB_REF_NAME#v}"
         env:
-          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ secrets.BUMP_BOT_TOKEN }}
