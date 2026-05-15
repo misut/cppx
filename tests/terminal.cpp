@@ -40,6 +40,19 @@ void test_status_cell_width() {
              "timeout status cell preserves width");
 }
 
+void test_status_badge() {
+    tc.check(cppx::terminal::status_badge(
+                 cppx::terminal::StatusKind::ok,
+                 false,
+                 false) == "+ OK",
+             "status badge has ascii symbol and label");
+    tc.check(cppx::terminal::status_badge(
+                 cppx::terminal::StatusKind::fail,
+                 false,
+                 true) == "\u00d7 FAIL",
+             "status badge has unicode symbol and label");
+}
+
 void test_key_value() {
     tc.check(cppx::terminal::key_value("target", "native") ==
                  "  target     native",
@@ -104,6 +117,33 @@ void test_progress_frame_with_detail_lines() {
     }, 0, true);
     tc.check(colored.contains("\n\x1b[2m    Building CXX object foo.o\x1b[0m"),
              "progress frame dims detail lines when color is enabled");
+}
+
+void test_visual_progress_frame() {
+    auto frame = cppx::terminal::format_progress_frame({
+        .done = 12,
+        .total = 56,
+        .percent = 21,
+        .label = "build",
+    }, 0, cppx::terminal::ProgressRenderOptions{
+        .show_bar = true,
+        .bar_width = 10,
+    });
+    tc.check(frame == "  RUN     [|] [==--------] 21% [12/56] build",
+             "visual progress frame adds an ascii progress bar");
+
+    auto unicode = cppx::terminal::format_progress_frame({
+        .done = 12,
+        .total = 56,
+        .percent = 21,
+        .label = "build",
+    }, 0, cppx::terminal::ProgressRenderOptions{
+        .unicode_enabled = true,
+        .show_bar = true,
+        .bar_width = 4,
+    });
+    tc.check(unicode.contains("\u280b"), "unicode progress frame uses braille spinner");
+    tc.check(unicode.contains("\u2591"), "unicode progress frame uses shaded bar");
 }
 
 std::string active_char(char ch) {
@@ -210,19 +250,45 @@ void test_diagnostic_formatting() {
                 "diagnostic formatter appends hints");
 }
 
+void test_github_actions_formatting() {
+    tc.check_eq(cppx::terminal::github_actions_group_start("build\nphase"),
+                std::string{"::group::build%0Aphase"},
+                "github group title is escaped");
+    tc.check_eq(cppx::terminal::github_actions_group_end(),
+                std::string{"::endgroup::"},
+                "github group end command");
+
+    auto annotation = cppx::terminal::github_actions_annotation({
+        .severity = cppx::terminal::DiagnosticSeverity::warning,
+        .message = "bad\nthing",
+        .title = "build, warning",
+        .file = "src/a:b.cppm",
+        .line = 7,
+        .column = 3,
+    });
+    tc.check_eq(annotation,
+                std::string{
+                    "::warning file=src/a%3Ab.cppm,line=7,col=3,"
+                    "title=build%2C warning::bad%0Athing"},
+                "github annotation escapes properties and data");
+}
+
 int main() {
     test_capability_settings();
     test_style_disabled();
     test_status_cell_width();
+    test_status_badge();
     test_key_value();
     test_stage();
     test_tail_excerpt();
     test_progress_frame();
     test_progress_frame_with_detail_lines();
+    test_visual_progress_frame();
     test_shimmer_label();
     test_key_event_parser_and_prompt_composer();
     test_history_and_input_classification();
     test_status_frame();
     test_diagnostic_formatting();
+    test_github_actions_formatting();
     return tc.summary("cppx.terminal");
 }

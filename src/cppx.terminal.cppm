@@ -59,6 +59,13 @@ struct ProgressSnapshot {
     std::vector<std::string> detail_lines;
 };
 
+struct ProgressRenderOptions {
+    bool color_enabled = false;
+    bool unicode_enabled = false;
+    bool show_bar = false;
+    std::size_t bar_width = 18;
+};
+
 namespace ansi {
 
 inline constexpr std::string_view reset = "\x1b[0m";
@@ -154,6 +161,45 @@ std::string status_cell(StatusKind status, bool color_enabled,
     auto label = status_label(status);
     auto padded = std::format("{:<{}}", label, width);
     return style(padded, status_role(status), color_enabled);
+}
+
+std::string_view status_symbol(StatusKind status, bool unicode_enabled) {
+    if (!unicode_enabled) {
+        switch (status) {
+        case StatusKind::run:
+            return ">";
+        case StatusKind::ok:
+            return "+";
+        case StatusKind::fail:
+            return "x";
+        case StatusKind::timeout:
+            return "!";
+        case StatusKind::skip:
+            return "-";
+        }
+        return ">";
+    }
+
+    switch (status) {
+    case StatusKind::run:
+        return "\u2022";
+    case StatusKind::ok:
+        return "\u2713";
+    case StatusKind::fail:
+        return "\u00d7";
+    case StatusKind::timeout:
+        return "\u23f1";
+    case StatusKind::skip:
+        return "\u2013";
+    }
+    return "\u2022";
+}
+
+std::string status_badge(StatusKind status, bool color_enabled = false,
+                         bool unicode_enabled = false) {
+    auto badge = std::format("{} {}", status_symbol(status, unicode_enabled),
+                             status_label(status));
+    return style(badge, status_role(status), color_enabled);
 }
 
 std::string key_value(std::string_view key, std::string_view value,
@@ -271,37 +317,95 @@ void append_progress_detail_lines(std::string& out, ProgressSnapshot const& snap
     }
 }
 
+std::string_view spinner_frame(std::size_t frame_index, bool unicode_enabled) {
+    if (unicode_enabled) {
+        constexpr auto unicode_frames = std::array<std::string_view, 10>{
+            "\u280b", "\u2819", "\u2839", "\u2838", "\u283c",
+            "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"};
+        return unicode_frames[frame_index % unicode_frames.size()];
+    }
+
+    constexpr auto ascii_frames =
+        std::array<std::string_view, 4>{"|", "/", "-", "\\"};
+    return ascii_frames[frame_index % ascii_frames.size()];
+}
+
+std::string progress_bar(int percent, std::size_t width,
+                         bool unicode_enabled) {
+    if (width == 0)
+        return {};
+    auto clamped = std::clamp(percent, 0, 100);
+    auto filled = static_cast<std::size_t>(
+        (static_cast<std::int64_t>(clamped) * static_cast<std::int64_t>(width)) /
+        100);
+    auto out = std::string{};
+    if (unicode_enabled) {
+        for (std::size_t i = 0; i < filled; ++i)
+            out += "\u2588";
+        for (std::size_t i = filled; i < width; ++i)
+            out += "\u2591";
+        return out;
+    }
+
+    out.append(filled, '=');
+    out.append(width - filled, '-');
+    return out;
+}
+
+std::string progress_measure(ProgressSnapshot const& snapshot,
+                             ProgressRenderOptions const& options) {
+    if (snapshot.total <= 0)
+        return {};
+    if (options.show_bar && options.bar_width > 0) {
+        return std::format("[{}] {}% [{}/{}]",
+                           progress_bar(snapshot.percent, options.bar_width,
+                                        options.unicode_enabled),
+                           snapshot.percent, snapshot.done, snapshot.total);
+    }
+    return std::format("[{}/{} {}%]", snapshot.done, snapshot.total,
+                       snapshot.percent);
+}
+
 std::string format_progress_frame(ProgressSnapshot const& snapshot,
                                   std::size_t frame_index,
-                                  bool color_enabled = false) {
-    constexpr auto spinner_frames =
-        std::array<std::string_view, 4>{"|", "/", "-", "\\"};
-    auto spin = spinner_frames[frame_index % spinner_frames.size()];
-    auto run = status_cell(StatusKind::run, color_enabled);
+                                  ProgressRenderOptions options) {
+    auto spin = spinner_frame(frame_index, options.unicode_enabled);
+    auto run = status_cell(StatusKind::run, options.color_enabled);
     if (snapshot.total <= 0) {
         auto label = snapshot.label.empty() ? std::string_view{"working"}
                                             : snapshot.label;
         auto out = std::format("  {} [{}] {}...", run, spin,
-                               shimmer_label(label, frame_index, color_enabled));
+                               shimmer_label(label, frame_index,
+                                             options.color_enabled));
         append_progress_timing(out, snapshot);
         if (!snapshot.detail.empty())
-            out += std::format("\n{}", style(snapshot.detail, StyleRole::dim, color_enabled));
-        append_progress_detail_lines(out, snapshot, color_enabled);
+            out += std::format("\n{}", style(snapshot.detail, StyleRole::dim,
+                                             options.color_enabled));
+        append_progress_detail_lines(out, snapshot, options.color_enabled);
         return out;
     }
 
+    auto measure = progress_measure(snapshot, options);
     auto out = snapshot.label.empty()
-        ? std::format("  {} [{}] [{}/{} {}%]", run, spin,
-                      snapshot.done, snapshot.total, snapshot.percent)
-        : std::format("  {} [{}] [{}/{} {}%] {}", run, spin,
-                      snapshot.done, snapshot.total, snapshot.percent,
-                      shimmer_label(snapshot.label, frame_index, color_enabled));
+        ? std::format("  {} [{}] {}", run, spin, measure)
+        : std::format("  {} [{}] {} {}", run, spin, measure,
+                      shimmer_label(snapshot.label, frame_index,
+                                    options.color_enabled));
 
     append_progress_timing(out, snapshot);
     if (!snapshot.detail.empty())
-        out += std::format("\n{}", style(snapshot.detail, StyleRole::dim, color_enabled));
-    append_progress_detail_lines(out, snapshot, color_enabled);
+        out += std::format("\n{}", style(snapshot.detail, StyleRole::dim,
+                                         options.color_enabled));
+    append_progress_detail_lines(out, snapshot, options.color_enabled);
     return out;
+}
+
+std::string format_progress_frame(ProgressSnapshot const& snapshot,
+                                  std::size_t frame_index,
+                                  bool color_enabled = false) {
+    return format_progress_frame(snapshot, frame_index, ProgressRenderOptions{
+        .color_enabled = color_enabled,
+    });
 }
 
 enum class KeyCode {
@@ -628,6 +732,114 @@ std::string format_diagnostic(DiagnosticMessage const& diagnostic,
         out += hint_line(hint, color_enabled);
     }
     return out;
+}
+
+std::string github_actions_data_escape(std::string_view value) {
+    auto out = std::string{};
+    for (auto ch : value) {
+        switch (ch) {
+        case '%':
+            out += "%25";
+            break;
+        case '\r':
+            out += "%0D";
+            break;
+        case '\n':
+            out += "%0A";
+            break;
+        default:
+            out.push_back(ch);
+            break;
+        }
+    }
+    return out;
+}
+
+std::string github_actions_property_escape(std::string_view value) {
+    auto out = github_actions_data_escape(value);
+    auto escaped = std::string{};
+    escaped.reserve(out.size());
+    for (auto ch : out) {
+        if (ch == ':')
+            escaped += "%3A";
+        else if (ch == ',')
+            escaped += "%2C";
+        else
+            escaped.push_back(ch);
+    }
+    return escaped;
+}
+
+std::string github_actions_group_start(std::string_view title) {
+    return std::format("::group::{}", github_actions_data_escape(title));
+}
+
+std::string github_actions_group_end() {
+    return "::endgroup::";
+}
+
+struct GithubActionsAnnotation {
+    DiagnosticSeverity severity = DiagnosticSeverity::info;
+    std::string message;
+    std::string title;
+    std::string file;
+    int line = 0;
+    int column = 0;
+    int end_line = 0;
+    int end_column = 0;
+};
+
+std::string_view github_actions_command(DiagnosticSeverity severity) {
+    switch (severity) {
+    case DiagnosticSeverity::info:
+        return "notice";
+    case DiagnosticSeverity::warning:
+        return "warning";
+    case DiagnosticSeverity::error:
+        return "error";
+    }
+    return "notice";
+}
+
+void append_github_property(std::vector<std::string>& properties,
+                            std::string_view key,
+                            std::string_view value) {
+    if (value.empty())
+        return;
+    properties.push_back(std::format("{}={}", key,
+                                     github_actions_property_escape(value)));
+}
+
+void append_github_property(std::vector<std::string>& properties,
+                            std::string_view key,
+                            int value) {
+    if (value <= 0)
+        return;
+    properties.push_back(std::format("{}={}", key, value));
+}
+
+std::string github_actions_annotation(GithubActionsAnnotation const& annotation) {
+    auto properties = std::vector<std::string>{};
+    append_github_property(properties, "file", annotation.file);
+    append_github_property(properties, "line", annotation.line);
+    append_github_property(properties, "col", annotation.column);
+    append_github_property(properties, "endLine", annotation.end_line);
+    append_github_property(properties, "endColumn", annotation.end_column);
+    append_github_property(properties, "title", annotation.title);
+
+    auto property_text = std::string{};
+    for (auto const& property : properties) {
+        if (!property_text.empty())
+            property_text.push_back(',');
+        property_text += property;
+    }
+    if (!property_text.empty())
+        property_text = " " + property_text;
+
+    return std::format("::{}{}::{}",
+                       github_actions_command(annotation.severity),
+                       property_text,
+                       github_actions_data_escape(annotation.message));
 }
 
 } // namespace cppx::terminal
