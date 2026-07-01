@@ -35,7 +35,7 @@ jobs:
             platform: x86_64-linux-gnu
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Resolve tool versions
         id: tool-versions
@@ -46,7 +46,7 @@ jobs:
 
       - name: Restore toolchains
         id: toolchain-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/.intron/toolchains
           key: intron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', '.intron.toml') }}
@@ -65,14 +65,14 @@ jobs:
 
       - name: Save toolchains
         if: github.ref == 'refs/heads/main' && steps.toolchain-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ~/.intron/toolchains
           key: ${{ steps.toolchain-cache.outputs.cache-primary-key }}
 
       - name: Restore exon
         id: exon-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/.local/bin/exon
           key: exon-v${{ steps.tool-versions.outputs.exon }}-${{ runner.os }}-${{ runner.arch }}
@@ -90,7 +90,7 @@ jobs:
 
       - name: Save exon
         if: github.ref == 'refs/heads/main' && steps.exon-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ~/.local/bin/exon
           key: ${{ steps.exon-cache.outputs.cache-primary-key }}
@@ -103,7 +103,7 @@ jobs:
     timeout-minutes: 15
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Resolve tool versions
         id: tool-versions
@@ -114,7 +114,7 @@ jobs:
 
       - name: Restore toolchains
         id: toolchain-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/.intron/toolchains
           key: intron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', '.intron.toml') }}
@@ -138,14 +138,14 @@ jobs:
 
       - name: Save toolchains
         if: github.ref == 'refs/heads/main' && steps.toolchain-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ~/.intron/toolchains
           key: ${{ steps.toolchain-cache.outputs.cache-primary-key }}
 
       - name: Restore exon
         id: exon-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/.local/bin/exon.exe
           key: exon-v${{ steps.tool-versions.outputs.exon }}-${{ runner.os }}-${{ runner.arch }}
@@ -165,7 +165,7 @@ jobs:
 
       - name: Save exon
         if: github.ref == 'refs/heads/main' && steps.exon-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ~/.local/bin/exon.exe
           key: ${{ steps.exon-cache.outputs.cache-primary-key }}
